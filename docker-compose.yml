@@ -1,0 +1,98 @@
+version: '3.8'
+
+networks:
+  retail_network:
+    driver: bridge
+
+services:
+  # 1. SQL SERVER NGUỒN (OLTP - Tự động Restore từ file .bak)
+  sqlserver-source:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sqlserver_source_oltp
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "123456"
+    ports:
+      - "1433:1433"
+    volumes:
+      - ./mssql-init:/var/opt/mssql/backup
+    networks:
+      - retail_network
+
+  # 2. HỆ THỐNG LƯU TRỮ DATA LAKE (MINIO) - Nơi chứa file Parquet tầng Bronze & Silver
+  minio:
+    image: minio/minio
+    container_name: minio_data_lake
+    ports:
+      - "9000:9000"       # Cổng để Spark kết nối đẩy dữ liệu vào
+      - "9001:9001"       # Cổng vào giao diện Web UI (localhost:9001)
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: 123456
+    volumes:
+      # Ánh xạ thư mục storage local vào MinIO để giữ lại file dữ liệu trên máy thật
+      - ./storage:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - retail_network
+
+  # 3. POSTGRES ĐÍCH (DATA WAREHOUSE GOLD)
+  postgres-gold:
+    image: postgres:15
+    container_name: postgres_gold_dw
+    environment:
+      POSTGRES_USER: gold_user
+      POSTGRES_PASSWORD: gold_password
+      POSTGRES_DB: adventureworks_dw
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./sql:/docker-entrypoint-initdb.d
+    networks:
+      - retail_network
+
+  # 4. TOOL GIAO DIỆN QUẢN LÝ DATABASE (PGADMIN)
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin_web
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: 123456
+    ports:
+      - "8080:80"
+    networks:
+      - retail_network
+
+  # 5. ENGINE TÍNH TOÁN PHÂN TÁN (SPARK MASTER)
+  spark-master:
+    image: bitnami/spark:3.5
+    container_name: spark_master_engine
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "7077:7077"
+      - "8081:8080" # Web UI check log Spark
+    volumes:
+      - ./bronze:/opt/bitnami/spark/bronze
+      - ./silver:/opt/bitnami/spark/silver
+      - ./gold:/opt/bitnami/spark/gold
+    networks:
+      - retail_network
+
+  # 6. STREAMLIT DASHBOARD
+  streamlit-app:
+    image: python:3.9-slim
+    container_name: streamlit_dashboard
+    working_dir: /app
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./app:/app
+      - ./requirements.txt:/app/requirements.txt
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+             streamlit run app.py --server.port=8501 --server.address=0.0.0.0"
+    depends_on:
+      - postgres-gold
+    networks:
+      - retail_network
