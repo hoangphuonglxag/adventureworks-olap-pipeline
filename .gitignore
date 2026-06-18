@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+
+# Logs
+*.log
+
+# Data lake / storage
+storage/
+bronze/
+silver/
+
+# MSSQL backup
+*.bak
+mssql-init/*.bak
+
+# Airflow
+airflow.db
+logs/
+
+# Docker volumes (tuỳ project)
+*.pid
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

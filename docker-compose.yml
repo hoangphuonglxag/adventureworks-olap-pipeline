@@ -1,5 +1,3 @@
-version: '3.8'
-
 networks:
   retail_network:
     driver: bridge
@@ -11,7 +9,7 @@ services:
     container_name: sqlserver_source_oltp
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "123456"
+      MSSQL_SA_PASSWORD: "AdminPassword123!"
     ports:
       - "1433:1433"
     volumes:
@@ -25,12 +23,12 @@ services:
     container_name: minio_data_lake
     ports:
       - "9000:9000"       # Cổng để Spark kết nối đẩy dữ liệu vào
-      - "9001:9001"       # Cổng vào giao diện Web UI (localhost:9001)
+      - "9001:9001"       # Cổng vào giao diện Web UI
     environment:
       MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: 123456
+      MINIO_ROOT_PASSWORD: adminpassword
     volumes:
-      # Ánh xạ thư mục storage local vào MinIO để giữ lại file dữ liệu trên máy thật
+      # Ánh xạ thư mục storage local vào MinIO để giữ lại file dữ liệu trên máy thật ổ E
       - ./storage:/data
     command: server /data --console-address ":9001"
     networks:
@@ -42,7 +40,7 @@ services:
     container_name: postgres_gold_dw
     environment:
       POSTGRES_USER: gold_user
-      POSTGRES_PASSWORD: gold_password
+      POSTGRES_PASSWORD: adminpassword
       POSTGRES_DB: adventureworks_dw
     ports:
       - "5432:5432"
@@ -51,31 +49,42 @@ services:
     networks:
       - retail_network
 
-  # 4. TOOL GIAO DIỆN QUẢN LÝ DATABASE (PGADMIN)
+  # 4. TOOL GIAO DIỆN QUẢN LÝ DATABASE (PGADMIN - Bản fix lỗi quyền Windows)
   pgadmin:
-    image: dpage/pgadmin4
+    image: dpage/pgadmin4:8.5
     container_name: pgadmin_web
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: 123456
+      PGADMIN_DEFAULT_PASSWORD: adminpassword
     ports:
-      - "8080:80"
+      - "5050:80"         # Đổi sang cổng 5050 thần thánh chống xung đột
+    depends_on:
+      - postgres-gold
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin   # Đút vào hộp đen Docker để né lỗi NTFS Windows
     networks:
       - retail_network
 
-  # 5. ENGINE TÍNH TOÁN PHÂN TÁN (SPARK MASTER)
+  # 5. ENGINE TÍNH TOÁN PHÂN TÁN (SPARK MASTER - Bản chính chủ Apache)
   spark-master:
-    image: bitnami/spark:3.5
+    image: apache/spark:3.5.0
     container_name: spark_master_engine
+    hostname: spark-master-engine   # Fix lỗi "hostname can't be fully qualified" (dùng - thay _ vì RFC 1123)
+    user: root            # Ép quyền root để thoải mái đọc ghi mapping ra ổ E máy thật
     environment:
       - SPARK_MODE=master
     ports:
       - "7077:7077"
-      - "8081:8080" # Web UI check log Spark
+      - "8081:8080"       # Web UI check log Spark
     volumes:
-      - ./bronze:/opt/bitnami/spark/bronze
-      - ./silver:/opt/bitnami/spark/silver
-      - ./gold:/opt/bitnami/spark/gold
+      - ./bronze:/opt/spark/bronze
+      - ./silver:/opt/spark/silver
+      - ./gold:/opt/spark/gold
+      - ./jars:/opt/spark/custom_jars   # Nơi chứa các thư viện JDBC driver nếu cần
+      - ./scripts:/opt/spark/scripts # Nơi chứa các script Spark job nếu cần
+
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    
     networks:
       - retail_network
 
@@ -96,3 +105,7 @@ services:
       - postgres-gold
     networks:
       - retail_network
+
+# Khai báo Named Volume cho pgAdmin ở cuối file
+volumes:
+  pgadmin_data:
