@@ -1,28 +1,35 @@
 # Python
 __pycache__/
+**/__pycache__/
 *.pyc
 *.pyo
 *.pyd
-.env
 .venv/
+
+# Environment & Secrets (KHÔNG commit file này)
+.env
 
 # Logs
 *.log
+logs/
 
-# Data lake / storage
+# Data lake / storage (files lớn, không commit)
 storage/
 bronze/
 silver/
+gold/
 
-# MSSQL backup
+# JAR files (tải về local, không commit)
+*.jar
+
+# MSSQL backup (file lớn, không commit)
 *.bak
 mssql-init/*.bak
 
 # Airflow
 airflow.db
-logs/
 
-# Docker volumes (tuỳ project)
+# Docker
 *.pid
 
 # VS Code / IDE

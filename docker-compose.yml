@@ -9,7 +9,7 @@ services:
     container_name: sqlserver_source_oltp
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "AdminPassword123!"
+      MSSQL_SA_PASSWORD: "${SQLSERVER_PASSWORD}"
     ports:
       - "1433:1433"
     volumes:
@@ -25,11 +25,11 @@ services:
       - "9000:9000"       # Cổng để Spark kết nối đẩy dữ liệu vào
       - "9001:9001"       # Cổng vào giao diện Web UI
     environment:
-      MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: adminpassword
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     volumes:
       # Ánh xạ thư mục storage local vào MinIO để giữ lại file dữ liệu trên máy thật ổ E
-      - ./storage:/data
+      - minio_data:/data
     command: server /data --console-address ":9001"
     networks:
       - retail_network
@@ -39,8 +39,8 @@ services:
     image: postgres:15
     container_name: postgres_gold_dw
     environment:
-      POSTGRES_USER: gold_user
-      POSTGRES_PASSWORD: adminpassword
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: adventureworks_dw
     ports:
       - "5432:5432"
@@ -54,8 +54,8 @@ services:
     image: dpage/pgadmin4:8.5
     container_name: pgadmin_web
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: adminpassword
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
     ports:
       - "5050:80"         # Đổi sang cổng 5050 thần thánh chống xung đột
     depends_on:
@@ -73,22 +73,42 @@ services:
     user: root            # Ép quyền root để thoải mái đọc ghi mapping ra ổ E máy thật
     environment:
       - SPARK_MODE=master
+      # Credentials đọc từ file .env → spark-defaults.conf dùng ${MINIO_ACCESS_KEY} etc.
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - SQLSERVER_PASSWORD=${SQLSERVER_PASSWORD}
     ports:
       - "7077:7077"
       - "8081:8080"       # Web UI check log Spark
     volumes:
-      - ./bronze:/opt/spark/bronze
-      - ./silver:/opt/spark/silver
-      - ./gold:/opt/spark/gold
-      - ./jars:/opt/spark/custom_jars   # Nơi chứa các thư viện JDBC driver nếu cần
-      - ./scripts:/opt/spark/scripts # Nơi chứa các script Spark job nếu cần
-
+      - ./jars:/opt/spark/custom_jars
+      - ./scripts:/opt/spark/scripts
+      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
-    
     networks:
       - retail_network
 
-  # 6. STREAMLIT DASHBOARD
+  # 6. SPARK WORKER - Executor thật sự xử lý data (Master chỉ điều phối)
+  spark-worker:
+    image: apache/spark:3.5.0
+    container_name: spark_worker_1
+    hostname: spark-worker-1
+    user: root
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master-engine:7077
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+    depends_on:
+      - spark-master
+    volumes:
+      - ./jars:/opt/spark/custom_jars
+      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master-engine:7077
+    networks:
+      - retail_network
+
+  # 7. STREAMLIT DASHBOARD
   streamlit-app:
     image: python:3.9-slim
     container_name: streamlit_dashboard
@@ -106,6 +126,6 @@ services:
     networks:
       - retail_network
 
-# Khai báo Named Volume cho pgAdmin ở cuối file
 volumes:
   pgadmin_data:
+  minio_data:
