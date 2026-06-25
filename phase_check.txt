@@ -60,7 +60,7 @@ docker exec -it sqlserver_source_oltp /opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1
 3. Thực hiện quét và trích xuất đúng 14 bảng thuộc phân hệ Sales, Production, Person phục vụ cho bài toán Bán hàng & Kho vận.
 4. Ghi trực tiếp ra file Parquet nhằm tận dụng tối đa khả năng nén dạng cột (Columnar Storage) của Parquet để chuẩn bị cho các bước xử lý nặng tiếp theo.
 
- docker exec -it spark_master_engine /opt/spark/bin/spark-submit --master local[*] --jars /opt/spark/custom_jars/mssql-jdbc-12.4.2.jre11.jar,/opt/spark/custom_jars/hadoop-aws-3.3.4.jar,/opt/spark/custom_jars/aws-java-sdk-bundle-1.12.262.jar /opt/spark/scripts/ingest_to_bronze.py
+ docker exec -it spark_master_engine /opt/spark/bin/spark-submit /opt/spark/scripts/ingest_to_bronze.py
 
 ---
 
