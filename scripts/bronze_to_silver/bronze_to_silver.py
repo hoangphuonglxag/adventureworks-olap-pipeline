@@ -8,7 +8,7 @@ import os
 
 from pyspark.sql import SparkSession
 
-from business_cleaners import (
+from scripts.bronze_to_silver.business_cleaners import (
     clean_customer,
     clean_product,
     clean_geography,
