@@ -6,7 +6,7 @@
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
-from scripts.bronze_to_silver.cleaners import (
+from cleaners import (
     generic_clean,
     cast_decimal,
     cast_date,
@@ -366,4 +366,20 @@ def clean_seller(
         "CommissionPct",
         "SalesYTD",
         "SalesLastYear"
+    )
+def clean_inventory(df):
+
+    df = generic_clean(df, ["ProductID", "LocationID"])
+
+    df = validate_positive(
+        df,
+        ["Quantity"]
+    )
+
+    return df.select(
+        F.col("ProductID").alias("product_id"),
+        F.col("LocationID").alias("location_id"),
+        F.col("Shelf").alias("shelf"),
+        F.col("Bin").alias("bin"),
+        F.col("Quantity").alias("quantity")
     )

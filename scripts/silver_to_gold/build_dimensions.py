@@ -48,7 +48,27 @@ def init_spark():
     spark.sparkContext.setLogLevel("WARN")
 
     return spark
+# =============================================================================
+# WRITE
+# =============================================================================
+def write_table(df, table):
 
+    (
+        df.write
+        .format("jdbc")
+        .option(
+            "url",
+            "jdbc:postgresql://postgres_gold_dw:5432/gold_dw"
+        )
+        .option("dbtable", table)
+        .option("user", "gold_user")
+        .option("password", "adminpassword")
+        .option("driver", "org.postgresql.Driver")
+        .mode("overwrite")
+        .save()
+    )
+
+    print(f"[SUCCESS] gold/{table}")
 
 # =============================================================================
 # MAIN
@@ -73,16 +93,9 @@ def main():
         end_date="2030-12-31"
     )
 
-    (
-        dim_date.write
-        .format("jdbc")
-        .option("url", "jdbc:postgresql://postgres_gold_dw:5432/gold_dw")
-        .option("dbtable", "dim_date")
-        .option("user", "gold_user")
-        .option("password", "adminpassword")
-        .option("driver", "org.postgresql.Driver")
-        .mode("overwrite")
-        .save()
+    write_table(
+        dim_date,
+        "dim_date"
     )
 
     print("✓ dim_date completed")
@@ -99,16 +112,9 @@ def main():
 
     dim_customer = build_dim_customer(customer)
 
-    (
-        dim_customer.write
-        .format("jdbc")
-        .option("url", "jdbc:postgresql://postgres_gold_dw:5432/gold_dw")
-        .option("dbtable", "dim_customer")
-        .option("user", "gold_user")
-        .option("password", "adminpassword")
-        .option("driver", "org.postgresql.Driver")
-        .mode("overwrite")
-        .save()
+    write_table(
+        dim_customer,
+        "dim_customer"
     )
 
     print("✓ dim_customer completed")
@@ -125,17 +131,10 @@ def main():
 
     dim_product = build_dim_product(product)
 
-    (
-        dim_product.write
-        .format("jdbc")
-        .option("url", "jdbc:postgresql://postgres_gold_dw:5432/gold_dw")
-        .option("dbtable", "dim_product")
-        .option("user", "gold_user")
-        .option("password", "adminpassword")
-        .option("driver", "org.postgresql.Driver")
-        .mode("overwrite")
-        .save()
-    )
+    write_table(
+        dim_product,
+        "dim_product"
+    )   
 
     print("✓ dim_product completed")
 
@@ -153,16 +152,9 @@ def main():
         geography
     )
 
-    (
-        dim_geography.write
-        .format("jdbc")
-        .option("url", "jdbc:postgresql://postgres_gold_dw:5432/gold_dw")
-        .option("dbtable", "dim_geography")
-        .option("user", "gold_user")
-        .option("password", "adminpassword")
-        .option("driver", "org.postgresql.Driver")
-        .mode("overwrite")
-        .save()
+    write_table(
+        dim_geography,
+        "dim_geography"
     )
 
     print("✓ dim_geography completed")
@@ -179,16 +171,9 @@ def main():
 
     dim_vendor = build_dim_vendor(vendor)
 
-    (
-        dim_vendor.write
-        .format("jdbc")
-        .option("url", "jdbc:postgresql://postgres_gold_dw:5432/gold_dw")
-        .option("dbtable", "dim_vendor")
-        .option("user", "gold_user")
-        .option("password", "adminpassword")
-        .option("driver", "org.postgresql.Driver")
-        .mode("overwrite")
-        .save()
+    write_table(    
+        dim_vendor,
+        "dim_vendor"
     )
 
     print("✓ dim_vendor completed")
@@ -207,16 +192,9 @@ def main():
         seller
     )
 
-    (
-        dim_seller.write
-        .format("jdbc")
-        .option("url", "jdbc:postgresql://postgres_gold_dw:5432/gold_dw")
-        .option("dbtable", "dim_seller")
-        .option("user", "gold_user")
-        .option("password", "adminpassword")
-        .option("driver", "org.postgresql.Driver")
-        .mode("overwrite")
-        .save()
+    write_table(
+        dim_seller,
+        "dim_seller"
     )
 
     print("✓ dim_seller completed")

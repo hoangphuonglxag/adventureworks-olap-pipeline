@@ -1,6 +1,5 @@
 # =============================================================================
-# build_fact_order.py
-# Build Gold Fact - Order
+# build_fact_seller_daily.py
 # =============================================================================
 
 import os
@@ -20,7 +19,7 @@ def init_spark():
 
     spark = (
         SparkSession.builder
-        .appName("Build Gold - Fact Order")
+        .appName("Build Gold - Fact Seller Daily")
         .config("spark.hadoop.fs.s3a.access.key", access_key)
         .config("spark.hadoop.fs.s3a.secret.key", secret_key)
         .getOrCreate()
@@ -44,19 +43,15 @@ def read_table(spark, path):
 # BUILD FACT
 # =============================================================================
 
-def build_fact_order(
+def build_fact_seller_daily(
     header_df,
     detail_df,
-    customer_dim,
-    product_dim,
-    geography_dim,
-    seller_dim,
-    date_dim
+    seller_dim
 ):
 
-    # ============================================================
-    # Join Header + Detail
-    # ============================================================
+    # --------------------------------------------------------
+    # Header + Detail
+    # --------------------------------------------------------
 
     df = (
         header_df.alias("h")
@@ -67,54 +62,25 @@ def build_fact_order(
         )
     )
 
-    # ============================================================
-    # Lookup Customer Key
-    # ============================================================
-
-    df = (
-        df.join(
-            customer_dim.select(
-                "customer_key",
-                "customer_id"
-            ),
-            "customer_id",
-            "left"
-        )
-    )
-
-    # ============================================================
-    # Lookup Product Key
-    # ============================================================
-
-    df = (
-        df.join(
-            product_dim.select(
-                "product_key",
-                "product_id"
-            ),
-            "product_id",
-            "left"
-        )
-    )
-
-    # ============================================================
+    # --------------------------------------------------------
     # Lookup Seller Key
-    # ============================================================
+    # --------------------------------------------------------
 
     df = (
         df.join(
             seller_dim.select(
                 "seller_key",
-                "seller_id"
+                "seller_id",
+                "commission_pct"
             ),
             df.sales_person_id == seller_dim.seller_id,
             "left"
         )
     )
 
-    # ============================================================
-    # Lookup Date Key
-    # ============================================================
+    # --------------------------------------------------------
+    # Date Key
+    # --------------------------------------------------------
 
     df = (
         df.withColumn(
@@ -126,67 +92,80 @@ def build_fact_order(
         )
     )
 
-    # ============================================================
-    # Lookup Geography
-    # ============================================================
+    # --------------------------------------------------------
+    # Revenue
+    # --------------------------------------------------------
 
-    if "address_id" in header_df.columns:
-
-        df = (
-            df.join(
-                geography_dim.select(
-                    "geography_key",
-                    "address_id"
-                ),
-                "address_id",
-                "left"
+    df = (
+        df.withColumn(
+            "revenue",
+            F.col("UnitPrice")
+            * F.col("OrderQty")
+            * (
+                1 - F.col("UnitPriceDiscount")
             )
         )
+    )
 
-    else:
+    # --------------------------------------------------------
+    # Commission Earned
+    # commission_pct trong dim_seller đang là %
+    # ví dụ 5.00 nghĩa là 5%
+    # --------------------------------------------------------
 
-        df = df.withColumn(
-            "geography_key",
-            F.lit(None).cast("int")
+    df = (
+        df.withColumn(
+            "commission_earned",
+            F.col("revenue")
+            * (F.col("commission_pct") / 100)
         )
+    )
 
-    # ============================================================
-    # FACT
-    # ============================================================
+    # --------------------------------------------------------
+    # Aggregate
+    # --------------------------------------------------------
 
     fact = (
 
-        df.select(
-
-            "order_id",
+        df.groupBy(
 
             "date_key",
 
-            "customer_key",
+            "seller_key"
 
-            "product_key",
+        )
 
-            "seller_key",
+        .agg(
 
-            "geography_key",
+            F.countDistinct(
+                "order_id"
+            ).alias(
+                "order_count"
+            ),
 
-            "sales_channel",
+            F.countDistinct(
+                "customer_id"
+            ).alias(
+                "customer_count"
+            ),
 
-            "OrderQty",
+            F.sum(
+                "OrderQty"
+            ).alias(
+                "quantity_sold"
+            ),
 
-            "UnitPrice",
+            F.sum(
+                "revenue"
+            ).alias(
+                "revenue"
+            ),
 
-            "UnitPriceDiscount",
-
-            "LineTotal",
-
-            "SubTotal",
-
-            "TaxAmt",
-
-            "Freight",
-
-            "TotalDue"
+            F.sum(
+                "commission_earned"
+            ).alias(
+                "commission_earned"
+            )
 
         )
 
@@ -208,7 +187,7 @@ def write_fact(df):
             "url",
             "jdbc:postgresql://postgres_gold_dw:5432/gold_dw"
         )
-        .option("dbtable", "fact_order")
+        .option("dbtable", "fact_seller_daily")
         .option("user", "gold_user")
         .option("password", "adminpassword")
         .option("driver", "org.postgresql.Driver")
@@ -242,10 +221,6 @@ def main():
 
     spark = init_spark()
 
-    print("=" * 60)
-    print("Building Gold Fact : fact_order")
-    print("=" * 60)
-
     header = read_table(
         spark,
         "s3a://silver/sales_order_header"
@@ -256,50 +231,24 @@ def main():
         "s3a://silver/sales_order_detail"
     )
 
-    customer = read_postgres_table(
-        spark,
-        "dim_customer"
-    )
-
-    product = read_postgres_table(
-        spark,
-        "dim_product"
-    )
-
-    geography = read_postgres_table(
-        spark,
-        "dim_geography"
-    )
-
     seller = read_postgres_table(
         spark,
         "dim_seller"
     )
 
-    date = read_postgres_table(
-        spark,
-        "dim_date"
-    )
-
-    fact = build_fact_order(
+    fact = build_fact_seller_daily(
         header,
         detail,
-        customer,
-        product,
-        geography,
-        seller,
-        date
+        seller
     )
 
     write_fact(fact)
 
     print(
-        f"Total Fact Records : {fact.count()}"
+        f"Seller Daily Rows : {fact.count()}"
     )
 
     spark.stop()
-
-    print("[SUCCESS] gold/fact_order")
 
 
 if __name__ == "__main__":

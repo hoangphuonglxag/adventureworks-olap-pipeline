@@ -8,14 +8,15 @@ import os
 
 from pyspark.sql import SparkSession
 
-from scripts.bronze_to_silver.business_cleaners import (
+from business_cleaners import (
     clean_customer,
     clean_product,
     clean_geography,
     clean_sales_header,
     clean_sales_detail,
     clean_vendor,
-    clean_seller
+    clean_seller,
+    clean_inventory
 )
 
 
@@ -284,7 +285,21 @@ def process_seller(spark):
         df,
         "seller"
     )
+def process_inventory(spark):
 
+    print("Cleaning Inventory...")
+
+    inventory = read_table(
+        spark,
+        "production_productinventory"
+    )
+
+    df = clean_inventory(inventory)
+
+    write_table(
+        df,
+        "product_inventory"
+    )
 
 # =============================================================================
 # MAIN
@@ -311,6 +326,8 @@ def main():
     process_vendor(spark)
 
     process_seller(spark)
+
+    process_inventory(spark)
 
     spark.stop()
 
