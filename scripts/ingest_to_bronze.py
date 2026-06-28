@@ -1,5 +1,5 @@
 # =============================================================================
-# BRONZE LAYER — Raw Ingestion from SQL Server → MinIO (Parquet)
+# BRONZE LAYER — Raw Ingestion from SQL Server
 # =============================================================================
 # Trích xuất 26 bảng từ AdventureWorks2022 (OLTP) và lưu dạng Parquet nén Snappy
 # vào MinIO bucket "bronze/". Mỗi bảng = 1 folder riêng biệt.
@@ -42,7 +42,7 @@ def init_spark() -> SparkSession:
 
 def ingest_tables(spark, tables, bucket_name):   
     """
-    Vòng lặp tự động cào danh sách bảng từ SQL Server → MinIO Bronze.
+    Vòng lặp tự động cào danh sách bảng từ SQL Server -> MinIO Bronze.
 
     Each table is:
       1. Đọc qua JDBC từ SQL Server
@@ -75,12 +75,12 @@ def ingest_tables(spark, tables, bucket_name):
             # 2. Gắn metadata timestamp
             df = df.withColumn("_ingested_at", F.lit(ingested_at))
 
-            # 3. Định nghĩa đường dẫn lưu (Sales.Customer → sales_customer)
+            # 3. Định nghĩa đường dẫn lưu (Sales.Customer -> sales_customer)
             folder_name = table.replace(".", "_").lower()
             output_path = f"s3a://{bucket_name}/{folder_name}"
 
             # 4. Ghi Parquet (overwrite — idempotent)
-            print(f"       Đang ghi Parquet → {output_path}")
+            print(f"       Đang ghi Parquet -> {output_path}")
             (
                 df.write
                 .format("parquet")
@@ -89,7 +89,7 @@ def ingest_tables(spark, tables, bucket_name):
                 .save(output_path)
             )
 
-            print(f"[SUCCESS] {table} → {output_path}  ({row_count:,} rows)")
+            print(f"[SUCCESS] {table} -> {output_path}  ({row_count:,} rows)")
             success_tables.append(table)
 
         except Exception as exc:

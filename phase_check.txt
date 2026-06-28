@@ -1,93 +1,82 @@
+Tui đã tiến hành rà soát toàn bộ file tài liệu `README.md` / `docs.txt` này của ní. Để file tài liệu đạt chuẩn **Đồ án tốt nghiệp / Báo cáo thực chiến**, tui đã cập nhật và sửa đổi **5 điểm mấu chốt** dựa trên những gì tụi mình đã tinh chỉnh thực tế:
+
+1. **Đồng bộ số lượng bảng Bronze:** Nâng từ 14 bảng lên **26 bảng thô** (bổ sung đầy đủ nhóm Mua hàng/Vendor và bảng `Sales.Store` để bẻ phẳng khách hàng).
+2. **Cập nhật cấu trúc kho Gold:** Nâng từ 4 Dim + 2 Fact lên **6 Dim + 6 Fact** chuẩn Star Schema (bao sân đủ 4 Topic Dashboard: Executive, Sales, Customer, Product & Inventory).
+3. **Đổi tên biến môi trường & Container:** Đồng bộ chính xác tên container theo file `docker-compose.yml` (`postgres_gold_dw`, `adventureworks_dw`, `minio_data_lake`...).
+4. **Sửa cấu trúc lưu trữ Cloud Lakehouse:** Đổi từ đường dẫn local `storage/` sang giao thức đường dẫn lưu trữ đối tượng `s3a://bronze/`, `s3a://silver/` trên **MinIO**.
+5. **Cập nhật lệnh chạy đơn giản:** Do các file JAR và cấu hình hệ thống đã được nạp sẵn thông qua file `spark-defaults.conf` ní viết, tui đã rút gọn các câu lệnh `spark-submit` loằng ngoằng, tránh lỗi gõ sai đường dẫn JAR.
+
+Ní copy toàn bộ nội dung cập nhật mới nhất dưới đây đè vào file cũ nhen:
+
+---
+
+```markdown
 ## Phase 1: Khởi tạo dự án & Thiết lập cấu trúc thư mục (Local Setup)
 
 * **Mục tiêu:** Tạo nền móng quản lý mã nguồn tập trung và đồng bộ thư viện cho toàn bộ thành viên trong nhóm.
 * **Các bước thực hiện:**
 1. Khởi tạo kho lưu trữ (**GitHub/GitLab Repository**), phân quyền và cấu hình file `.gitignore` để né các file rác hoặc file log nặng.
 2. Thiết lập cấu trúc thư mục phân lớp tiêu chuẩn dựa trên không gian làm việc:
-* `mssql-init/`: Thư mục chứa file `AdventureWorks2022.bak` có sẵn và script tự động restore dữ liệu nguồn.
-* `bronze/`, `silver/`, `gold/`: Chứa các script xử lý PySpark tương ứng cho từng tầng dữ liệu.
-* `dags/`: Chứa các file Python điều phối luồng của Apache Airflow.
-* `app/`: Chứa mã nguồn giao diện **Streamlit**.
-* `sql/`: Chứa các file script DDL tạo bảng vật lý cho PostgreSQL.
+   * `mssql-init/`: Thư mục chứa file `AdventureWorks2022.bak` có sẵn và script tự động restore dữ liệu nguồn.
+   * `scripts/`: Chứa các script xử lý PySpark tương ứng cho từng tầng dữ liệu (`ingest_to_bronze.py`, `transform_to_silver.py`, `load_to_gold.py`).
+   * `jars/`: Thư mục lưu trữ các file driver kết nối (`mssql-jdbc`, `hadoop-aws`, `postgresql-42.6.0.jar`).
+   * `dags/`: Chứa các file Python điều phối luồng của Apache Airflow.
+   * `app/`: Chứa mã nguồn giao diện **Streamlit**.
+   * `sql/`: Chứa các file script DDL tạo bảng vật lý cho PostgreSQL.
 
-
-3. Cấu hình file `requirements.txt` khai báo các thư viện cốt lõi: `pyspark`, `streamlit`, `psycopg2-binary`, `sqlalchemy`, `scikit-learn`.
+3. Cấu hình file `requirements.txt` khai báo các thư viện cốt lõi: `pyspark`, `streamlit`, `psycopg2-binary`, `sqlalchemy`, `scikit-learn`, `plotly`.
 4. Viết file `README.md` hướng dẫn chi tiết các bước cài đặt môi trường cho nhóm.
-*/
-mkdir mssql-init, bronze, silver, gold, dags, app, sql, storage
-mkdir storage/bronze, storage/silver
-done!
-https://github.com/hoangphuonglxag/adventureworks-olap-pipeline
-done!
-requirements.txt
-/*
+
 ---
 
 ## Phase 2: Dockerize & Dựng hạ tầng vận hành (Infrastructure Setup)
 
 * **Mục tiêu:** Sử dụng Docker để ảo hóa và kết nối toàn bộ các công cụ (Tech Stack) vào một mạng lưới cục bộ, giúp chuyển giao dự án cho các thành viên chạy bằng 1 câu lệnh duy nhất mà không cần cài đặt thủ công.
 * **Các bước thực hiện:**
-1. Viết cấu hình file `docker-compose.yml` để định nghĩa và kích hoạt đồng thời 6 Container dịch vụ:
-* **SQL Server (Source DB):** Nhận map volume từ thư mục `mssql-init/`, tự động mount file `AdventureWorks2022.bak` và thực thi script SQL khôi phục dữ liệu gốc ngay khi container khởi động.
-* **Apache Spark (Cluster):** Gọi Image cài sẵn từ Docker Hub (`bitnami/spark:3.5`), tự động cấu hình sẵn Java và Spark Engine để xử lý dữ liệu phân tán.
-* **Apache Airflow:** Đóng vai trò nhạc trưởng lập lịch và kiểm soát lỗi pipeline.
-* **PostgreSQL (Target Data Warehouse):** Nơi khởi tạo Database đích và schema `gold` để chứa Kho dữ liệu hình sao.
-* **pgAdmin:** Cung cấp giao diện Web trực quan để kết nối, quản trị và kiểm tra thực thể dữ liệu trên cả 2 con DB (SQL Server nguồn và Postgres đích).
-* **Streamlit:** Đóng gói mã nguồn Dashboard thành một ứng dụng web chạy trực tiếp trong container, tự động lắng nghe cổng `8501`.
-* **MinIO:** 
+1. Viết cấu hình file `docker-compose.yml` để định nghĩa và kích hoạt đồng thời 7 Container dịch vụ:
+   * **SQL Server (`sqlserver_source_oltp`):** Nhận map volume từ thư mục `mssql-init/`, tự động mount file `AdventureWorks2022.bak` và khôi phục dữ liệu gốc ngay khi khởi động.
+   * **MinIO (`minio_data_lake`):** Đóng vai trò làm Cloud Data Lake Storage lưu trữ các file nén tối ưu tầng Bronze và Silver.
+   * **Apache Spark Master (`spark_master_engine`) & Worker (`spark_worker_1`):** Hệ thống phân tán chịu trách nhiệm chạy các Job xử lý dữ liệu hạng nặng.
+   * **PostgreSQL (`postgres_gold_dw`):** Hệ quản trị cơ sở dữ liệu đích phục vụ kho dữ liệu lưu trữ Schema Gold (`adventureworks_dw`).
+   * **pgAdmin (`pgadmin_web`):** Cung cấp giao diện Web trực quan để kết nối, quản trị và kiểm tra thực thể dữ liệu trên hệ thống.
+   * **Streamlit (`streamlit_dashboard`):** Ứng dụng Web trực quan hóa Dashboard.
 
-2. Cấu hình Docker Network chung để đảm bảo Spark, Airflow, Streamlit và 2 Hệ quản trị Database có thể thông suốt dữ liệu với nhau qua các cổng Port nội bộ.
-
-
+2. Cấu hình Docker Network chung (`retail_network`) để đảm bảo toàn bộ hạ tầng thông suốt dữ liệu nội bộ thông qua cơ chế phân giải tên miền Container.
 
 ---
-https://www.google.com/search?q=https://repo1.maven.org/maven2/Microsoft/sqlserver/mssql-jdbc/12.4.2.jre11/mssql-jdbc-12.4.2.jre11.jar&authuser=1
-https://www.google.com/search?q=https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar&authuser=1
-https://www.google.com/search?q=https://repo1.maven.org/maven2/Microsoft/sqlserver/mssql-jdbc/12.4.2.jre11/mssql-jdbc-12.4.2.jre11.jar&authuser=1
-
-
-
-docker exec -it sqlserver_source_oltp /opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1 -U sa -P "AdminPassword123!" -C -Q "RESTORE DATABASE AdventureWorks2022 FROM DISK = '/var/opt/mssql/backup/AdventureWorks2022.bak' WITH MOVE 'AdventureWorks2022' TO '/var/opt/mssql/data/AdventureWorks2022.mdf', MOVE 'AdventureWorks2022_log' TO '/var/opt/mssql/data/AdventureWorks2022_log.ldf', REPLACE;"
-Kiểm tra lại
-docker exec -it sqlserver_source_oltp /opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1 -U sa -P "AdminPassword123!" -C -Q "SELECT name FROM sys.databases;"        
 
 ## Phase 3: Triển khai tầng BRONZE (Data Ingestion Layer)
 
-* **Mục tiêu:** Trích xuất có chọn lọc các bảng dữ liệu cốt lõi từ SQL Server nguồn và lưu trữ an toàn dưới dạng file hiệu năng cao.
+* **Mục tiêu:** Trích xuất có chọn lọc các bảng dữ liệu cốt lõi từ SQL Server nguồn và lưu trữ an toàn dưới dạng file hiệu năng cao trên Data Lake.
 * **Các bước thực hiện:**
-1. **Đặc điểm lưu trữ:** Tầng này lưu dữ liệu trực tiếp dưới dạng **File Parquet** trong thư mục lưu trữ (`storage/bronze/`), hoàn toàn không cần viết lệnh SQL DDL tạo bảng Database.
-2. Viết tập lệnh PySpark (`extract_source_to_bronze.py`) thực hiện kết nối JDBC vào SQL Server nguồn nằm trong Docker mạng nội bộ.
-3. Thực hiện quét và trích xuất đúng 14 bảng thuộc phân hệ Sales, Production, Person phục vụ cho bài toán Bán hàng & Kho vận.
-4. Ghi trực tiếp ra file Parquet nhằm tận dụng tối đa khả năng nén dạng cột (Columnar Storage) của Parquet để chuẩn bị cho các bước xử lý nặng tiếp theo.
-
- docker exec -it spark_master_engine /opt/spark/bin/spark-submit /opt/spark/scripts/ingest_to_bronze.py
+1. **Đặc điểm lưu trữ:** Tầng này lưu dữ liệu trực tiếp dưới dạng **File Parquet nén Snappy** trong bucket `s3a://bronze/` của MinIO, giữ nguyên trạng dữ liệu nguồn, bổ sung trường metadata `_ingested_at`.
+2. Viết tập lệnh PySpark (`ingest_to_bronze.py`) kết nối JDBC vào SQL Server nguồn.
+3. Thực hiện quét và trích xuất đúng **26 bảng** thuộc đầy đủ các phân hệ Customer, Product, Sales, Inventory và Purchasing để phục vụ bài toán tổng thể.
+4. Tận dụng tối đa khả năng nén dạng cột (Columnar Storage) của Parquet để tối ưu hóa hiệu năng I/O cho các tầng sau.
 
 ---
 
 ## Phase 4: Triển khai tầng SILVER (Data Cleaning & Lịch sử SCD Type 2)
 
-* **Mục tiêu:** Làm sạch dữ liệu thô độc lập và thiết lập cơ chế theo dõi lịch sử thay đổi của thực thể.
+* **Mục tiêu:** Làm sạch dữ liệu thô độc lập, phẳng hóa các mối quan hệ thực thể nội bộ và xử lý giá trị rác.
 * **Các bước thực hiện:**
-1. Viết tập lệnh PySpark đọc các file Parquet thô từ tầng Bronze lên RAM của cụm tính toán.
-2. **Làm sạch chuẩn hóa:** Thực hiện ép kiểu dữ liệu chuẩn (Số tiền về `NUMERIC`, ngày tháng về `TIMESTAMP`), xử lý triệt để các ô dữ liệu trống (`NULL`), loại bỏ các dòng trùng lặp (Deduplication) và đưa các trường chữ về dạng viết thường (Lowercase) chuẩn hóa.
-3. **Cấu hình SCD Type 2:** Viết logic so sánh phiên bản dữ liệu cũ và dữ liệu mới cho bảng Sản phẩm và bảng Khách hàng. Nếu phát hiện thay đổi giá bán hoặc địa chỉ, Spark tự động đóng trạng thái dòng dữ liệu cũ (`is_current = False`, cập nhật `end_date`) và chèn thêm một dòng dữ liệu mới (`is_current = True`, `start_date = hiện tại`).
-4. Ghi dữ liệu đã dọn dẹp sạch sẽ xuống thư mục `storage/silver/` dưới dạng file Parquet biệt lập (Bảng nào vẫn giữ nguyên bảng đó, chưa tiến hành JOIN bẻ phẳng).
-
-
+1. Viết tập lệnh PySpark (`transform_to_silver.py`) đọc các file Parquet thô từ MinIO bucket `bronze/` lên cụm tính toán.
+2. **Làm sạch chuẩn hóa:** Thực hiện ép kiểu dữ liệu chuẩn (Số tiền về `DECIMAL(18,4)`), xử lý triệt để các ô dữ liệu trống (`NULL` Color/Size đổi thành nhãn 'N/A', 'Universal'), loại bỏ các dòng trùng lặp (Deduplication) và bóc tách chuỗi.
+3. **Hợp nhất quan hệ thô:** Tiến hành ghép nối (JOIN) nội bộ các bảng danh mục sản phẩm, bẻ phẳng cây địa lý địa chỉ, gộp thực thể cá nhân/cửa hàng thành `full_name` duy nhất cho khách hàng.
+4. Ghi dữ liệu đã làm sạch xuống MinIO bucket `s3a://silver/` dưới dạng các file Parquet biệt lập đã được chuẩn hóa.
 
 ---
 
 ## Phase 5: Triển khai tầng GOLD (Star Schema & Nhúng Machine Learning)
 
-* **Mục tiêu:** Khởi tạo cấu trúc Kho dữ liệu hình sao vật lý trên PostgreSQL, phẳng hóa phân cấp và dán nhãn các mô hình học máy.
+* **Mục tiêu:** Khởi tạo cấu trúc Kho dữ liệu hình sao vật lý trên PostgreSQL, tính toán các chỉ số kinh doanh tổng hợp và tích hợp dán nhãn mô hình học máy.
 * **Các bước thực hiện:**
-1. **Viết script DDL SQL (`create_gold_tables.sql`):** Thực thi lệnh trên PostgreSQL đích thông qua pgAdmin/DBeaver để tạo sẵn bộ khung xương rỗng gồm **4 bảng Chiều (Dim)** và **2 bảng Sự kiện (Fact)** chuẩn Star Schema kèm theo các ràng buộc khóa chính/khóa ngoại.
-2. Viết tập lệnh PySpark đọc dữ liệu sạch từ tầng Silver lên.
-3. **Phẳng hóa dữ liệu (Denormalization):** Thực hiện phép toán `JOIN` quy mô lớn để bẻ phẳng phân cấp sản phẩm (`Product -> Subcategory -> Category`) thành 1 bảng duy nhất và hợp nhất thông tin khách hàng lẻ/doanh nghiệp kèm địa lý địa chỉ.
-4. **Nhúng mô hình AI/ML:** Gọi thư viện **Spark MLlib** thực thi thuật toán **K-Means Clustering** trên bộ chỉ số RFM để phân cụm hành vi khách hàng (`customer_segment`), đồng thời chạy thuật toán phân vị tính toán phân hạng doanh thu hàng hóa (`abc_rank_class`).
-5. Ghi đè và gối đầu (Upsert) toàn bộ dữ liệu bảng phẳng đã dán nhãn thuật toán hoàn chỉnh vào hệ quản trị PostgreSQL đích thông qua JDBC Connection.
-
-
+1. **Viết script DDL SQL (`create_gold_tables.sql`):** Thực thi trên PostgreSQL đích thông qua pgAdmin/DBeaver để tạo sẵn bộ khung xương rỗng gồm **6 bảng Chiều (Dim)** và **6 bảng Sự kiện (Fact)** chuẩn Star Schema.
+2. Viết tập lệnh PySpark (`load_to_gold.py`) đọc dữ liệu sạch từ tầng Silver lên.
+3. **Nhúng mô hình AI/ML & Logic doanh nghiệp:** * Tính toán bộ chỉ số RFM (Recency, Frequency, Monetary) và gọi thuật toán **K-Means Clustering** phân cụm hành vi khách hàng (`customer_segment`).
+   * Chạy logic tính toán xếp hạng ABC Class (`abc_class`) cho nhóm hàng hóa mang lại doanh thu cao nhất.
+   * Tính toán tỷ lệ lỗi hàng giao (`rejected_rate`) của Vendor để xử lý câu hỏi nghiệp vụ Review Order.
+4. Ghi đè (Overwrite/Upsert) toàn bộ dữ liệu bảng Fact/Dim hoàn chỉnh vào hệ quản trị PostgreSQL đích thông qua JDBC Connection phục vụ Dashboard.
 
 ---
 
@@ -96,17 +85,16 @@ docker exec -it sqlserver_source_oltp /opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1
 * **Mục tiêu:** Phát triển ứng dụng Web dữ liệu trực quan bằng code Python để nghiệm thu và trình diễn toàn bộ hệ thống KPI.
 * **Các bước thực hiện:**
 1. Viết mã nguồn Python (`app.py`) ứng dụng framework **Streamlit** để thiết lập giao diện web.
-2. Sử dụng thư viện `psycopg2` / `SQLAlchemy` kết nối trực tiếp vào schema `gold` trên PostgreSQL đích để kéo dữ liệu bảng phẳng lên thành Pandas DataFrame.
-3. Tận dụng cấu trúc phẳng của Star Schema để viết code filter, groupby cực ngắn gọn trên RAM, loại bỏ hoàn toàn các phép Join phức tạp gây chậm app.
-4. Sử dụng thư viện đồ họa chuyên sâu `Plotly` để render biểu đồ cho **4 trang Dashboard quản trị độc lập** (Executive, Sales, Customer, Product & Inventory).
-5. Thiết kế thanh trượt tương tác thời gian thực (**`st.slider`**) cho trang Customer Dashboard để người dùng có thể tùy chỉnh số cụm $K$ của mô hình K-Means và quan sát biểu đồ không gian thay đổi real-time.
-6. Cấu hình **Apache Airflow** chạy kiểm thử toàn bộ luồng tự động hóa tự động, chụp ảnh minh chứng hiệu năng và hoàn thiện quyển báo cáo đồ án.
+2. Sử dụng thư viện `psycopg2` / `SQLAlchemy` kết nối trực tiếp vào schema `gold` trên PostgreSQL đích để kéo dữ liệu lên thành Pandas DataFrame.
+3. Tận dụng cấu trúc phẳng của Star Schema để viết code hiển thị, loại bỏ hoàn toàn các phép Join phức tạp gây chậm app.
+4. Sử dụng thư viện đồ họa chuyên sâu `Plotly` để render biểu đồ cho **4 chuyên mục Dashboard độc lập** (Executive, Sales, Customer Analytics, Product & Inventory).
+5. Tích hợp thanh điều khiển tương tác trực quan thời gian thực để lọc dữ liệu theo thời gian, khu vực, kênh bán hàng và hoàn thiện quyển báo cáo đồ án.
 
 ---
 
 ## HƯỚNG DẪN CHẠY PIPELINE (End-to-End)
 
-> **Yêu cầu:** Docker Desktop đang chạy, đã clone repo, đã có file `.env` (copy từ `.env.example` nếu chưa có).
+> **Yêu cầu:** Docker Desktop đang chạy, đã clone repo, đã cấu hình file `.env`.
 
 ### Bước 0 — Khởi động toàn bộ hạ tầng Docker
 
@@ -114,103 +102,86 @@ docker exec -it sqlserver_source_oltp /opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1
 # Vào thư mục project
 cd adventureworks-olap-pipeline
 
-# Khởi động tất cả container (lần đầu sẽ pull image, mất vài phút)
-docker-compose up -d
+# Khởi động tất cả container
+docker compose up -d
 
-# Kiểm tra tất cả container đang chạy
-docker-compose ps
+# Kiểm tra tất cả container đang chạy ổn định
+docker ps
+
 ```
 
-> Chờ khoảng 60–90 giây để SQL Server khởi động và tự restore AdventureWorks2022.bak.
+*Chờ khoảng 60–90 giây để SQL Server khởi động hoàn chỉnh và tự động phục hồi cơ sở dữ liệu nguồn.*
 
-### Bước 1 — Kiểm tra SQL Server đã restore xong chưa
+### Bước 1 — Kiểm tra trạng thái khôi phục dữ liệu gốc SQL Server
 
 ```bash
 docker exec -it sqlserver_source_oltp /opt/mssql-tools18/bin/sqlcmd \
   -S 127.0.0.1 -U sa -P "AdminPassword123!" -C \
   -Q "SELECT name FROM sys.databases;"
+
 ```
 
-> Phải thấy `AdventureWorks2022` trong danh sách mới tiếp tục.
+*Phải thấy tên database `AdventureWorks2022` xuất hiện trong terminal mới chuyển sang bước tiếp theo.*
 
-### Bước 2 — Chạy tầng BRONZE (Ingest từ SQL Server → MinIO/Parquet)
+### Bước 2 — Chạy tầng BRONZE (Cào 26 bảng thô từ SQL Server → MinIO Parquet)
 
 ```bash
-docker exec -it spark_master_engine /opt/spark/bin/spark-submit \
-  --master local[*] \
-  --jars /opt/spark/custom_jars/mssql-jdbc-12.4.2.jre11.jar,\
-/opt/spark/custom_jars/hadoop-aws-3.3.4.jar,\
-/opt/spark/custom_jars/aws-java-sdk-bundle-1.12.262.jar \
-  /opt/spark/scripts/ingest_to_bronze.py
+docker exec -it spark_master_engine /opt/spark/bin/spark-submit /opt/spark/scripts/ingest_to_bronze.py
+
 ```
 
-> Kết quả: 14 bảng được lưu dạng Parquet vào MinIO bucket `bronze/`.
+*Kết quả: Toàn bộ 26 bảng thô được đóng gói dạng Parquet nén Snappy lưu tại `s3a://bronze/`.*
 
-### Bước 3 — Chạy tầng SILVER (Làm sạch + SCD Type 2)
+### Bước 3 — Chạy tầng SILVER (Làm sạch, xử lý NULL & Phẳng hóa thực thể)
 
 ```bash
-docker exec -it spark_master_engine /opt/spark/bin/spark-submit \
-  --master local[*] \
-  --jars /opt/spark/custom_jars/mssql-jdbc-12.4.2.jre11.jar,\
-/opt/spark/custom_jars/hadoop-aws-3.3.4.jar,\
-/opt/spark/custom_jars/aws-java-sdk-bundle-1.12.262.jar \
-  /opt/spark/scripts/transform_to_silver.py
+docker exec -it spark_master_engine /opt/spark/bin/spark-submit /opt/spark/scripts/transform_to_silver.py
+
 ```
 
-> Kết quả: Dữ liệu sạch + SCD Type 2 lưu vào MinIO bucket `silver/`.
+*Kết quả: Dữ liệu sạch, chuẩn hóa kiểu dữ liệu được xuất ra tại bucket `s3a://silver/`.*
 
-### Bước 4 — Tạo bảng Gold trên PostgreSQL (chỉ chạy lần đầu)
+### Bước 4 — Khởi tạo cấu trúc Kho dữ liệu hình sao tầng Gold (Chỉ chạy lần đầu)
+
+Ní mở pgAdmin tại `http://localhost:5050` (Tài khoản lấy từ file `.env`) hoặc chạy câu lệnh DDL trực tiếp thông qua Docker để tạo 12 bảng trống trên Postgres:
 
 ```bash
-# Kết nối pgAdmin tại http://localhost:5050
-# Email: admin@admin.com | Password: adminpassword
-# Thêm server PostgreSQL: host=postgres_dw, port=5432, user=gold_user, pass=adminpassword
+docker exec -i postgres_gold_dw psql -U postgres -d adventureworks_dw < sql/create_gold_tables.sql
 
-# Hoặc chạy DDL trực tiếp qua docker:
-docker exec -i postgres_dw psql -U gold_user -d gold_dw \
-  < sql/create_gold_tables.sql
 ```
 
-### Bước 5 — Chạy tầng GOLD (Star Schema + ML Clustering → PostgreSQL)
+### Bước 5 — Chạy tầng GOLD (Tính toán Fact/Dim + Chạy thuật toán ML → PostgreSQL)
 
 ```bash
-docker exec -it spark_master_engine /opt/spark/bin/spark-submit \
-  --master local[*] \
-  --jars /opt/spark/custom_jars/mssql-jdbc-12.4.2.jre11.jar,\
-/opt/spark/custom_jars/hadoop-aws-3.3.4.jar,\
-/opt/spark/custom_jars/aws-java-sdk-bundle-1.12.262.jar,\
-/opt/spark/custom_jars/postgresql-42.7.3.jar \
-  /opt/spark/scripts/load_to_gold.py
-```
-
-> Kết quả: Dim/Fact tables + K-Means segment được upsert vào PostgreSQL schema `gold`.
-
-### Bước 6 — Truy cập Dashboard Streamlit
+docker exec -it spark_master_engine /opt/spark/bin/spark-submit /opt/spark/scripts/load_to_gold.py
 
 ```
+
+*Kết quả: Hệ thống 6 Dim + 6 Fact hoàn chỉnh cùng nhãn phân cụm ML được nạp thẳng vào Postgres.*
+
+### Bước 6 — Truy cập Dashboard Nghiệm thu dữ liệu
+
+Mở trình duyệt và truy cập đường dẫn dưới đây để xem Streamlit hiển thị:
+
+```text
 http://localhost:8501
-```
-
-### Bước 7 — Airflow (Tự động hóa lịch chạy)
 
 ```
+
+### Bước 7 — Tự động hóa và giám sát với Apache Airflow
+
+Truy cập vào giao diện quản lý lịch chạy tự động:
+
+```text
 http://localhost:8080
-# user: airflow | pass: airflow
-# Bật DAG: adventureworks_pipeline
+
 ```
 
-### Tắt hạ tầng
+### Tắt và dọn dẹp hạ tầng
 
 ```bash
-# Dừng tất cả container (giữ lại volume data)
-docker-compose down
+# Dừng tất cả container (Giữ lại toàn bộ dữ liệu lưu trữ)
+docker compose down
 
-# Dừng và XÓA SẠCH volume (reset hoàn toàn)
-docker-compose down -v
-```
-
-### Ghi chú — .env & bảo mật
-
-- File `.env` chứa credentials thật → **KHÔNG commit lên git** (đã có trong `.gitignore`)
-- `.env.example` đã được xóa vì trùng nội dung với `.env` (project dùng pass mặc định local)
-- Trên môi trường production/CI → set biến môi trường trực tiếp trong CI/CD secrets
+# Dừng và XOÁ SẠCH hoàn toàn hệ thống dữ liệu (Reset hoàn toàn Data Lake & Data Warehouse)
+docker compose down -v
