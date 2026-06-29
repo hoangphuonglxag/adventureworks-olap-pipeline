@@ -226,15 +226,13 @@ Build toàn bộ **Star Schema** vào PostgreSQL `gold_dw`.
     )
 
     # =========================================================================
-    # DEPENDENCY GRAPH
-    # Dims chạy song song → tất cả dims xong → Facts chạy song song → done
-    #
-    # Khi thêm ML:
-    #   thay: all_facts >> notify_done
-    #   bằng: all_facts >> all_ml >> notify_done
+    # DEPENDENCY GRAPH (Đã đổi thành nối tiếp để không bị tràn RAM)
     # =========================================================================
-    for dim in all_dims:
-        dim >> all_facts          # mỗi dim → tất cả facts (fan-out)
+    # 1. Chạy nối tiếp các Dims
+    dim_date >> dim_customer >> dim_product >> dim_geography >> dim_seller >> dim_vendor
 
-    for fact in all_facts:
-        fact >> notify_done       # mỗi fact → notify (fan-in)
+    # 2. Xong Dims mới chạy nối tiếp các Facts
+    dim_vendor >> fact_order >> fact_product_daily >> fact_seller_daily >> fact_order_daily >> fact_inventory >> fact_customer_behavior
+    
+    # 3. Cuối cùng báo Done
+    fact_customer_behavior >> notify_done
