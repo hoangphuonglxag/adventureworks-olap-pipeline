@@ -240,16 +240,16 @@ def clean_sales_header(
         F.col("SalesOrderID").alias("order_id"),
         F.col("CustomerID").alias("customer_id"),
         F.col("SalesPersonID").alias("sales_person_id"),
-        "TerritoryID",
-        "OrderDate",
-        "DueDate",
-        "ShipDate",
-        "Status",
+        F.col("TerritoryID").alias("territory_id"),
+        F.col("OrderDate").alias("order_date"),
+        F.col("DueDate").alias("due_date"),
+        F.col("ShipDate").alias("ship_date"),
+        F.col("Status").alias("status"),
         "sales_channel",
-        "SubTotal",
-        "TaxAmt",
-        "Freight",
-        "TotalDue"
+        F.col("SubTotal").alias("sub_total"),
+        F.col("TaxAmt").alias("tax_amt"),
+        F.col("Freight").alias("freight_amt"),
+        F.col("TotalDue").alias("total_due")
     )
 
 
@@ -288,10 +288,10 @@ def clean_sales_detail(
         F.col("SalesOrderID").alias("order_id"),
         F.col("SalesOrderDetailID").alias("order_detail_id"),
         F.col("ProductID").alias("product_id"),
-        "OrderQty",
-        "UnitPrice",
-        "UnitPriceDiscount",
-        "LineTotal"
+        F.col("OrderQty").alias("order_qty"),
+        F.col("UnitPrice").alias("unit_price"),
+        F.col("UnitPriceDiscount").alias("unit_price_discount"),
+        F.col("LineTotal").alias("line_total")
     )
 
 

@@ -1,307 +1,192 @@
 # =============================================================================
 # build_fact_order.py
-# Build Gold Fact - Order
+# Build Gold Fact - Order  (Incremental Load + UPSERT)
+# =============================================================================
+#
+# TEMPORAL JOIN với dim_product (SCD Type 2):
+#   Fact lưu product_key của phiên bản giá có hiệu lực tại thời điểm order.
+#   → Khi join Dashboard sau này vẫn biết được giá nào đang áp dụng.
+#
+# Chạy độc lập  : python build_fact_order.py
+# Chạy từ build_fact.py: import build_fact_order; build_fact_order.run(spark)
+#
+# Incremental Load:
+#   - Watermark key : "fact_order"
+#   - Filter column : order_date >= last watermark
+#   - Lần đầu      : load toàn bộ (watermark = 2000-01-01)
+#   - Lần sau       : chỉ load đơn hàng mới hơn mốc trước
+#
+# UPSERT: staging table → INSERT ON CONFLICT DO UPDATE (không DROP bảng Gold)
 # =============================================================================
 
 import os
+from datetime import datetime, timezone
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
+from gold_utils import (
+    read_silver,
+    read_pg_table,
+    upsert_to_gold,
+    get_watermark,
+    get_watermark_date_str,
+    update_watermark,
+    UNKNOWN_KEY
+)
+
+WATERMARK_KEY = "fact_order"
+
 
 # =============================================================================
-# SPARK
+# SPARK INIT
 # =============================================================================
 
-def init_spark():
-
+def init_spark() -> SparkSession:
     access_key = os.environ.get("MINIO_ACCESS_KEY", "admin")
     secret_key = os.environ.get("MINIO_SECRET_KEY", "adminpassword")
 
     spark = (
         SparkSession.builder
-        .appName("Build Gold - Fact Order")
+        .appName("Build Gold - Fact Order (Incremental)")
         .config("spark.hadoop.fs.s3a.access.key", access_key)
         .config("spark.hadoop.fs.s3a.secret.key", secret_key)
         .getOrCreate()
     )
-
     spark.sparkContext.setLogLevel("WARN")
-
     return spark
 
 
 # =============================================================================
-# READ
+# TRANSFORM
 # =============================================================================
 
-def read_table(spark, path):
+def build_fact_order(header_df, detail_df, dim_customer, dim_product,
+                     dim_geography, dim_seller, dim_date) -> "DataFrame":
+    """
+    Grain: 1 dòng = 1 dòng chi tiết đơn hàng.
 
-    return spark.read.parquet(path)
+    Join dim_seller dùng is_current=TRUE (đọc từ ngoài vào) để lấy đúng
+    seller_key hiện tại tại thời điểm chạy pipeline.
+    Nếu không match → fallback về UNKNOWN_KEY (Online orders không có SalesPersonID).
+    """
+    df = header_df.alias("h").join(detail_df.alias("d"), "order_id", "inner")
 
-
-# =============================================================================
-# BUILD FACT
-# =============================================================================
-
-def build_fact_order(
-    header_df,
-    detail_df,
-    customer_dim,
-    product_dim,
-    geography_dim,
-    seller_dim,
-    date_dim
-):
-
-    # ============================================================
-    # Join Header + Detail
-    # ============================================================
-
-    df = (
-        header_df.alias("h")
-        .join(
-            detail_df.alias("d"),
-            "order_id",
-            "inner"
-        )
+    df = df.join(
+        dim_customer.select("customer_key", "customer_id"), "customer_id", "left"
+    )
+    # TEMPORAL JOIN dim_product: lấy product_key của phiên bản giá active tại order_date
+    df = df.join(
+        dim_product.alias("p"),
+        (F.col("d.product_id") == F.col("p.product_id")) &
+        (F.col("h.order_date") >= F.col("p.effective_date")) &
+        (
+            F.col("p.expiry_date").isNull() |
+            (F.col("h.order_date") < F.col("p.expiry_date"))
+        ),
+        "left"
     )
 
-    # ============================================================
-    # Lookup Customer Key
-    # ============================================================
-
-    df = (
-        df.join(
-            customer_dim.select(
-                "customer_key",
-                "customer_id"
-            ),
-            "customer_id",
-            "left"
-        )
+    df = df.join(
+        dim_seller.select("seller_key", "seller_id"),
+        df.sales_person_id == dim_seller.seller_id,
+        "left"
     )
 
-    # ============================================================
-    # Lookup Product Key
-    # ============================================================
-
-    df = (
-        df.join(
-            product_dim.select(
-                "product_key",
-                "product_id"
-            ),
-            "product_id",
-            "left"
-        )
+    df = df.withColumn(
+        "date_key",
+        F.date_format(F.col("order_date"), "yyyyMMdd").cast("int")
     )
-
-    # ============================================================
-    # Lookup Seller Key
-    # ============================================================
-
-    df = (
-        df.join(
-            seller_dim.select(
-                "seller_key",
-                "seller_id"
-            ),
-            df.sales_person_id == seller_dim.seller_id,
-            "left"
-        )
-    )
-
-    # ============================================================
-    # Lookup Date Key
-    # ============================================================
-
-    df = (
-        df.withColumn(
-            "date_key",
-            F.date_format(
-                "OrderDate",
-                "yyyyMMdd"
-            ).cast("int")
-        )
-    )
-
-    # ============================================================
-    # Lookup Geography
-    # ============================================================
 
     if "address_id" in header_df.columns:
-
-        df = (
-            df.join(
-                geography_dim.select(
-                    "geography_key",
-                    "address_id"
-                ),
-                "address_id",
-                "left"
-            )
+        df = df.join(
+            dim_geography.select("geography_key", "address_id"), "address_id", "left"
         )
-
     else:
+        df = df.withColumn("geography_key", F.lit(None).cast("string"))
 
-        df = df.withColumn(
-            "geography_key",
-            F.lit(None).cast("int")
-        )
-
-    # ============================================================
-    # FACT
-    # ============================================================
-
-    fact = (
-
-        df.select(
-
-            "order_id",
-
-            "date_key",
-
-            "customer_key",
-
-            "product_key",
-
-            "seller_key",
-
-            "geography_key",
-
-            "sales_channel",
-
-            "OrderQty",
-
-            "UnitPrice",
-
-            "UnitPriceDiscount",
-
-            "LineTotal",
-
-            "SubTotal",
-
-            "TaxAmt",
-
-            "Freight",
-
-            "TotalDue"
-
-        )
-
+    return df.select(
+        # Surrogate key của fact = sha2 của order_detail_id
+        F.sha2(F.col("d.order_detail_id").cast("string"), 256).alias("fact_order_key"),
+        F.col("h.order_id"),
+        "date_key",
+        F.coalesce(F.col("customer_key"), F.lit(UNKNOWN_KEY)).alias("customer_key"),
+        F.coalesce(F.col("product_key"),  F.lit(UNKNOWN_KEY)).alias("product_key"),
+        F.coalesce(F.col("seller_key"),   F.lit(UNKNOWN_KEY)).alias("seller_key"),
+        "geography_key",
+        F.col("h.sales_channel"),
+        F.col("d.order_qty").cast("int"),
+        F.col("d.unit_price").cast("decimal(18,4)"),
+        F.col("d.unit_price_discount").cast("decimal(10,4)"),
+        F.col("d.line_total").cast("decimal(18,4)"),
+        F.col("h.sub_total").cast("decimal(18,4)"),
+        F.col("h.tax_amt").cast("decimal(18,4)"),
+        F.col("h.freight_amt").cast("decimal(18,4)"),
+        F.col("h.total_due").cast("decimal(18,4)")
     )
 
-    return fact
-
 
 # =============================================================================
-# WRITE
+# ENTRY POINT
 # =============================================================================
 
-def write_fact(df):
+def run(spark: SparkSession) -> int:
+    """Được gọi từ build_fact.py hoặc Airflow DAG."""
+    run_ts = datetime.now(tz=timezone.utc)
 
-    (
-        df.write
-        .format("jdbc")
-        .option(
-            "url",
-            "jdbc:postgresql://postgres_gold_dw:5432/gold_dw"
-        )
-        .option("dbtable", "fact_order")
-        .option("user", "gold_user")
-        .option("password", "adminpassword")
-        .option("driver", "org.postgresql.Driver")
-        .mode("overwrite")
-        .save()
+    print("\n" + "=" * 60)
+    print("  Building Gold Fact : fact_order  [Incremental + UPSERT]")
+    print("=" * 60)
+
+    # -- Watermark incremental ------------------------------------------------
+    wm_date = get_watermark_date_str(spark, WATERMARK_KEY)
+    print(f"  [WATERMARK] Lọc order_date >= {wm_date}")
+
+    header_all = read_silver(spark, "sales_order_header")
+    detail_all = read_silver(spark, "sales_order_detail")
+
+    header = header_all.filter(F.col("order_date") >= F.lit(wm_date).cast("date"))
+    detail = detail_all.join(header.select("order_id"), "order_id", "inner")
+
+    inc_count = header.count()
+    if inc_count == 0:
+        print("  [SKIP] Không có đơn hàng mới — bỏ qua.")
+        return 0
+
+    print(f"  [INCREMENTAL] {inc_count:,} order(s) mới")
+
+    # -- Đọc dim (chỉ lấy is_current=TRUE cho seller & customer) -------------
+    dim_customer = read_pg_table(
+        spark, "(SELECT customer_id, customer_key FROM dim_customer WHERE is_current=TRUE) t"
     )
-#=============================================================================
-# READ POSTGRES
-#=============================================================================
-def read_postgres_table(spark, table):
+    # TẤT CẢ phiên bản dim_product (kể cả expired) để temporal join
+    dim_product  = read_pg_table(spark, "dim_product")
+    dim_geography= read_pg_table(spark, "dim_geography")
+    dim_seller   = read_pg_table(
+        spark, "(SELECT seller_id, seller_key FROM dim_seller WHERE is_current=TRUE) t"
+    )
+    dim_date     = read_pg_table(spark, "dim_date")
 
-    return (
-        spark.read
-        .format("jdbc")
-        .option(
-            "url",
-            "jdbc:postgresql://postgres_gold_dw:5432/gold_dw"
-        )
-        .option("dbtable", table)
-        .option("user", "gold_user")
-        .option("password", "adminpassword")
-        .option("driver", "org.postgresql.Driver")
-        .load()
+    # -- Build fact -----------------------------------------------------------
+    fact = build_fact_order(
+        header, detail, dim_customer, dim_product, dim_geography, dim_seller, dim_date
     )
 
-# =============================================================================
-# MAIN
-# =============================================================================
+    # -- UPSERT ---------------------------------------------------------------
+    upserted = upsert_to_gold(spark, fact, "fact_order", "fact_order_key")
+    print(f"  [✓] fact_order → {upserted:,} row(s) upserted")
+
+    # -- Cập nhật watermark ---------------------------------------------------
+    update_watermark(spark, WATERMARK_KEY, run_ts, inc_count)
+
+    return upserted
+
 
 def main():
-
     spark = init_spark()
-
-    print("=" * 60)
-    print("Building Gold Fact : fact_order")
-    print("=" * 60)
-
-    header = read_table(
-        spark,
-        "s3a://silver/sales_order_header"
-    )
-
-    detail = read_table(
-        spark,
-        "s3a://silver/sales_order_detail"
-    )
-
-    customer = read_postgres_table(
-        spark,
-        "dim_customer"
-    )
-
-    product = read_postgres_table(
-        spark,
-        "dim_product"
-    )
-
-    geography = read_postgres_table(
-        spark,
-        "dim_geography"
-    )
-
-    seller = read_postgres_table(
-        spark,
-        "dim_seller"
-    )
-
-    date = read_postgres_table(
-        spark,
-        "dim_date"
-    )
-
-    fact = build_fact_order(
-        header,
-        detail,
-        customer,
-        product,
-        geography,
-        seller,
-        date
-    )
-
-    write_fact(fact)
-
-    print(
-        f"Total Fact Records : {fact.count()}"
-    )
-
+    run(spark)
     spark.stop()
-
-    print("[SUCCESS] gold/fact_order")
 
 
 if __name__ == "__main__":
-
     main()

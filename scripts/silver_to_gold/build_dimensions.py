@@ -1,207 +1,99 @@
 # =============================================================================
 # build_dimensions.py
-# Build All Gold Dimensions
+# Orchestrator — Build All Gold Dimensions
+# =============================================================================
+#
+# Chạy toàn bộ dim: python build_dimensions.py
+# Hoặc Airflow DAG gọi từng run() riêng lẻ.
+#
+# Thứ tự load (dependency order):
+#   dim_date       → không phụ thuộc ai
+#   dim_product    → không phụ thuộc ai
+#   dim_geography  → không phụ thuộc ai
+#   dim_vendor     → không phụ thuộc ai
+#   dim_customer   → SCD Type 2
+#   dim_seller     → SCD Type 2
 # =============================================================================
 
 import os
 
 from pyspark.sql import SparkSession
 
-from build_dim_date import build_dim_date
-from build_dim_customer import build_dim_customer
-from build_dim_product import build_dim_product
-from build_dim_geography import build_dim_geography
-from build_dim_vendor import build_dim_vendor
-from build_dim_seller import build_dim_seller
+import build_dim_date
+import build_dim_customer
+import build_dim_product
+import build_dim_geography
+import build_dim_vendor
+import build_dim_seller
+from gold_utils import upsert_to_gold, read_silver
 
 
 # =============================================================================
-# SPARK
+# SPARK INIT
 # =============================================================================
 
-def init_spark():
-
-    access_key = os.environ.get(
-        "MINIO_ACCESS_KEY",
-        "admin"
-    )
-
-    secret_key = os.environ.get(
-        "MINIO_SECRET_KEY",
-        "adminpassword"
-    )
+def init_spark() -> SparkSession:
+    access_key = os.environ.get("MINIO_ACCESS_KEY", "admin")
+    secret_key = os.environ.get("MINIO_SECRET_KEY", "adminpassword")
 
     spark = (
         SparkSession.builder
-        .appName("AdventureWorks - Build Dimensions")
-        .config(
-            "spark.hadoop.fs.s3a.access.key",
-            access_key
-        )
-        .config(
-            "spark.hadoop.fs.s3a.secret.key",
-            secret_key
-        )
+        .appName("AdventureWorks - Build All Dimensions")
+        .config("spark.hadoop.fs.s3a.access.key", access_key)
+        .config("spark.hadoop.fs.s3a.secret.key", secret_key)
         .getOrCreate()
     )
-
     spark.sparkContext.setLogLevel("WARN")
-
     return spark
-# =============================================================================
-# WRITE
-# =============================================================================
-def write_table(df, table):
 
-    (
-        df.write
-        .format("jdbc")
-        .option(
-            "url",
-            "jdbc:postgresql://postgres_gold_dw:5432/gold_dw"
-        )
-        .option("dbtable", table)
-        .option("user", "gold_user")
-        .option("password", "adminpassword")
-        .option("driver", "org.postgresql.Driver")
-        .mode("overwrite")
-        .save()
-    )
-
-    print(f"[SUCCESS] gold/{table}")
 
 # =============================================================================
 # MAIN
 # =============================================================================
 
 def main():
-
     spark = init_spark()
 
+    print("\n" + "=" * 70)
+    print("  BUILD GOLD DIMENSIONS")
     print("=" * 70)
-    print("BUILD GOLD DIMENSIONS")
-    print("=" * 70)
 
-    # -------------------------------------------------------------------------
-    # Dimension Date
-    # -------------------------------------------------------------------------
-    print("\n[1/6] Building dim_date ...")
+    # ── [1/6] dim_date ────────────────────────────────────────────────────── #
+    # Chạy 1 lần — không cần chạy lại trừ khi muốn mở rộng phạm vi ngày
+    print("\n[1/6] dim_date ...")
+    dim_date = build_dim_date.build_dim_date(spark, "2010-01-01", "2030-12-31")
+    upsert_to_gold(spark, dim_date, "dim_date", "date_key")
+    print("  [✓] dim_date")
 
-    dim_date = build_dim_date(
-        spark,
-        start_date="2010-01-01",
-        end_date="2030-12-31"
-    )
+    # ── [2/6] dim_product — SCD Type 2 (track giá) ──────────────────────────── #
+    print("\n[2/6] dim_product (SCD Type 2 — track standard_cost, list_price) ...")
+    build_dim_product.run(spark)   # scd2_merge() bên trong
+    print("  [✓] dim_product")
 
-    write_table(
-        dim_date,
-        "dim_date"
-    )
+    # ── [3/6] dim_geography ───────────────────────────────────────────────── #
+    print("\n[3/6] dim_geography ...")
+    silver_geography = read_silver(spark, "geography")
+    dim_geography = build_dim_geography.build_dim_geography(silver_geography)
+    upsert_to_gold(spark, dim_geography, "dim_geography", "geography_key")
+    print("  [✓] dim_geography")
 
-    print("✓ dim_date completed")
+    # ── [4/6] dim_vendor ──────────────────────────────────────────────────── #
+    print("\n[4/6] dim_vendor ...")
+    silver_vendor = read_silver(spark, "vendor")
+    dim_vendor = build_dim_vendor.build_dim_vendor(silver_vendor)
+    upsert_to_gold(spark, dim_vendor, "dim_vendor", "vendor_key")
+    print("  [✓] dim_vendor")
 
+    # ── [5/6] dim_customer — SCD Type 2 ──────────────────────────────────── #
+    print("\n[5/6] dim_customer (SCD Type 2) ...")
+    build_dim_customer.run(spark)   # scd2_merge() bên trong
 
-    # -------------------------------------------------------------------------
-    # Dimension Customer
-    # -------------------------------------------------------------------------
-    print("\n[2/6] Building dim_customer ...")
-
-    customer = spark.read.parquet(
-        "s3a://silver/customer"
-    )
-
-    dim_customer = build_dim_customer(customer)
-
-    write_table(
-        dim_customer,
-        "dim_customer"
-    )
-
-    print("✓ dim_customer completed")
-
-
-    # -------------------------------------------------------------------------
-    # Dimension Product
-    # -------------------------------------------------------------------------
-    print("\n[3/6] Building dim_product ...")
-
-    product = spark.read.parquet(
-        "s3a://silver/product"
-    )
-
-    dim_product = build_dim_product(product)
-
-    write_table(
-        dim_product,
-        "dim_product"
-    )   
-
-    print("✓ dim_product completed")
-
-
-    # -------------------------------------------------------------------------
-    # Dimension Geography
-    # -------------------------------------------------------------------------
-    print("\n[4/6] Building dim_geography ...")
-
-    geography = spark.read.parquet(
-        "s3a://silver/geography"
-    )
-
-    dim_geography = build_dim_geography(
-        geography
-    )
-
-    write_table(
-        dim_geography,
-        "dim_geography"
-    )
-
-    print("✓ dim_geography completed")
-
-
-    # -------------------------------------------------------------------------
-    # Dimension Vendor
-    # -------------------------------------------------------------------------
-    print("\n[5/6] Building dim_vendor ...")
-
-    vendor = spark.read.parquet(
-        "s3a://silver/vendor"
-    )
-
-    dim_vendor = build_dim_vendor(vendor)
-
-    write_table(    
-        dim_vendor,
-        "dim_vendor"
-    )
-
-    print("✓ dim_vendor completed")
-
-
-    # -------------------------------------------------------------------------
-    # Dimension Seller
-    # -------------------------------------------------------------------------
-    print("\n[6/6] Building dim_seller ...")
-
-    seller = spark.read.parquet(
-        "s3a://silver/seller"
-    )
-
-    dim_seller = build_dim_seller(
-        seller
-    )
-
-    write_table(
-        dim_seller,
-        "dim_seller"
-    )
-
-    print("✓ dim_seller completed")
-
+    # ── [6/6] dim_seller — SCD Type 2 ────────────────────────────────────── #
+    print("\n[6/6] dim_seller (SCD Type 2) ...")
+    build_dim_seller.run(spark)     # scd2_merge() bên trong
 
     print("\n" + "=" * 70)
-    print("ALL DIMENSIONS BUILT SUCCESSFULLY")
+    print("  ALL DIMENSIONS BUILT SUCCESSFULLY")
     print("=" * 70)
 
     spark.stop()
