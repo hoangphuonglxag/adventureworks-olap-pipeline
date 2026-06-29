@@ -5,3 +5,6 @@ sqlalchemy==2.0.28
 scikit-learn==1.4.1.post1
 pandas==2.2.1
 plotly==5.19.0
+
+# Streamlit extras
+openpyxl==3.1.2
