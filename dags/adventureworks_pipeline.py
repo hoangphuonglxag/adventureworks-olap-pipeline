@@ -1,9 +1,26 @@
 # =============================================================================
 # dags/adventureworks_pipeline.py
-# DAG: AdventureWorks OLAP Pipeline  (Bronze → Silver → Gold)
+# DAG: AdventureWorks OLAP Pipeline
+#
+# Cấu trúc task graph:
+#
+#   ingest_bronze
+#        │
+#   bronze_to_silver
+#        │
+#   ┌────┴──────────────────────────────────────────────────┐
+#   dim_date  dim_customer  dim_product  dim_geography  dim_seller  dim_vendor
+#   └────┬──────────────────────────────────────────────────┘
+#        │  (tất cả Dims xong mới chạy Facts)
+#   ┌────┴────────────────────────────────────────────────────────────────┐
+#   fact_order  fact_product_daily  fact_seller_daily  fact_order_daily  ...
+#   └────┬────────────────────────────────────────────────────────────────┘
+#        │
+#   [ml_scoring]   ← placeholder, uncomment khi script ML sẵn sàng
+#        │
+#   notify_done
 #
 # Trigger: THỦ CÔNG qua Airflow UI (schedule=None)
-# Executor: LocalExecutor  |  Spark: DockerOperator → spark_master_engine
 # =============================================================================
 
 from __future__ import annotations
@@ -11,50 +28,50 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from airflow import DAG
-from airflow.operators.docker_operator import DockerOperator
+from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
-from docker.types import Mount
 
 # ---------------------------------------------------------------------------
-# Default args áp dụng cho tất cả tasks
+# Constants
+# ---------------------------------------------------------------------------
+SPARK_SUBMIT = "/opt/spark/bin/spark-submit"
+SPARK_MASTER = "spark://spark-master-engine:7077"
+
+# Đường dẫn scripts (mount vào spark_master_engine qua volume ./scripts)
+SCRIPTS_ROOT   = "/opt/spark/scripts"
+SILVER_TO_GOLD = f"{SCRIPTS_ROOT}/silver_to_gold"
+BRONZE_TO_SILVER = f"{SCRIPTS_ROOT}/bronze_to_silver"
+
+# ---------------------------------------------------------------------------
+# Default args
 # ---------------------------------------------------------------------------
 DEFAULT_ARGS = {
     "owner": "data-team",
-    "depends_on_past": False,           # Task không phụ thuộc lần chạy trước
-    "retries": 1,                        # Tự retry 1 lần nếu fail
-    "retry_delay": timedelta(minutes=5), # Chờ 5 phút trước khi retry
+    "depends_on_past": False,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5),
     "email_on_failure": False,
     "email_on_retry": False,
 }
 
 # ---------------------------------------------------------------------------
-# Spark submit command builder — tái sử dụng cho cả 3 tầng
+# Helper: tạo BashOperator chạy spark-submit trong container spark_master_engine
 # ---------------------------------------------------------------------------
-SPARK_MASTER = "spark://spark-master-engine:7077"
-SPARK_BIN    = "/opt/spark/bin/spark-submit"
-SCRIPTS_DIR  = "/opt/spark/scripts"
-
-def spark_cmd(script_name: str) -> str:
-    """Trả về lệnh spark-submit hoàn chỉnh cho script tương ứng."""
-    return f"{SPARK_BIN} {SCRIPTS_DIR}/{script_name}"
-
-
-# ---------------------------------------------------------------------------
-# Callback functions — log kết quả sau mỗi task
-# ---------------------------------------------------------------------------
-def on_success_callback(context):
-    task_id  = context["task_instance"].task_id
-    run_id   = context["run_id"]
-    duration = context["task_instance"].duration
-    print(f"[✅ SUCCESS] Task '{task_id}' | Run: {run_id} | Duration: {duration:.1f}s")
-
-
-def on_failure_callback(context):
-    task_id  = context["task_instance"].task_id
-    run_id   = context["run_id"]
-    exception = context.get("exception", "Unknown error")
-    print(f"[❌ FAILED] Task '{task_id}' | Run: {run_id} | Error: {exception}")
+def spark_task(task_id: str, script_path: str, dag: DAG) -> BashOperator:
+    """
+    Chạy spark-submit script bên trong container spark_master_engine.
+    Dùng `docker exec` từ Airflow scheduler → gọi script trong Spark cluster.
+    """
+    return BashOperator(
+        task_id=task_id,
+        bash_command=(
+            f"docker exec spark_master_engine "
+            f"{SPARK_SUBMIT} {script_path}"
+        ),
+        dag=dag,
+        doc_md=f"Chạy `{script_path}` trên Spark cluster.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -62,121 +79,232 @@ def on_failure_callback(context):
 # ---------------------------------------------------------------------------
 with DAG(
     dag_id="adventureworks_olap_pipeline",
-    description="End-to-end pipeline: SQL Server → Bronze (MinIO) → Silver → Gold (PostgreSQL)",
+    description=(
+        "Medallion pipeline: SQL Server → Bronze (MinIO) → Silver → Gold (PostgreSQL). "
+        "Dims load song song, sau đó Facts load song song."
+    ),
     default_args=DEFAULT_ARGS,
-
-    # ── QUAN TRỌNG: schedule=None → chỉ trigger THỦ CÔNG từ UI ──
-    schedule=None,
-
+    schedule=None,          # CHỈ trigger thủ công từ UI
     start_date=days_ago(1),
-    catchup=False,          # Không chạy bù các khoảng thời gian đã qua
-    max_active_runs=1,      # Chỉ 1 pipeline chạy tại 1 thời điểm (tránh race condition)
-
-    tags=["adventureworks", "spark", "etl", "olap"],
-
-    # Doc hiển thị trong Airflow UI
+    catchup=False,
+    max_active_runs=1,      # Không chạy song song 2 pipeline cùng lúc
+    tags=["adventureworks", "spark", "etl", "medallion"],
     doc_md="""
 ## AdventureWorks OLAP Pipeline
 
-Pipeline 3 tầng theo kiến trúc **Medallion Architecture**:
+**Kiến trúc Medallion (3 tầng):**
 
-| Tầng | Script | Nguồn → Đích |
-|------|--------|-------------|
-| 🥉 Bronze | `ingest_to_bronze.py` | SQL Server 2022 → MinIO (Parquet) |
-| 🥈 Silver | `bronze_to_silver.py` | MinIO Bronze → MinIO Silver (cleaned) |
-| 🥇 Gold   | `silver_to_gold.py`   | MinIO Silver → PostgreSQL DW (Star Schema) |
+| Tầng | Mô tả | Lưu trữ |
+|------|-------|---------|
+| 🥉 Bronze | Raw data từ SQL Server | MinIO `s3a://bronze/` |
+| 🥈 Silver | Cleaned & flattened | MinIO `s3a://silver/` |
+| 🥇 Gold | Star Schema (Dim + Fact) | PostgreSQL `adventureworks_dw` |
 
-**Cách trigger:** Vào DAG → nút ▶ (Trigger DAG) ở góc phải trên.
+**Cách trigger thủ công:**
+1. Vào DAG `adventureworks_olap_pipeline`
+2. Bấm nút ▶ (Trigger DAG) góc phải trên
+3. Theo dõi Graph View để xem tiến trình từng task
 
-**Xem kết quả:** Dashboard Streamlit tại [http://localhost:8501](http://localhost:8501)
-    """,
+**Dashboard:** [http://localhost:8501](http://localhost:8501)
+""",
 ) as dag:
 
-    # -----------------------------------------------------------------------
-    # Task 1: Ingest to Bronze
-    # SQL Server (OLTP) → MinIO s3a://bronze/ (26 bảng Parquet Snappy)
-    # -----------------------------------------------------------------------
-    ingest_bronze = DockerOperator(
+    # =========================================================================
+    # TẦNG 1: BRONZE — Ingest từ SQL Server vào MinIO
+    # =========================================================================
+    ingest_bronze = spark_task(
         task_id="ingest_to_bronze",
-        image="apache/spark:3.5.0",
-        container_name="task_ingest_bronze",
-        command=spark_cmd("ingest_to_bronze.py"),
-        network_mode="adventureworks-olap-pipeline_retail_network",
-        auto_remove=True,           # Xóa container tạm sau khi xong
-        docker_url="unix://var/run/docker.sock",
-        environment={
-            "SPARK_MASTER": SPARK_MASTER,
-        },
-        mounts=[
-            Mount(
-                source="/opt/spark/scripts",   # Mount scripts từ host
-                target="/opt/spark/scripts",
-                type="bind",
-            ),
-        ],
-        on_success_callback=on_success_callback,
-        on_failure_callback=on_failure_callback,
-        doc_md="**Bronze Layer**: Cào 26 bảng từ SQL Server → MinIO Parquet.",
+        script_path=f"{SCRIPTS_ROOT}/ingest_to_bronze.py",
+        dag=dag,
     )
 
-    # -----------------------------------------------------------------------
-    # Task 2: Bronze → Silver (Cleansing & Flattening)
-    # -----------------------------------------------------------------------
-    transform_silver = DockerOperator(
-        task_id="transform_to_silver",
-        image="apache/spark:3.5.0",
-        container_name="task_transform_silver",
-        command=spark_cmd("bronze_to_silver.py"),
-        network_mode="adventureworks-olap-pipeline_retail_network",
-        auto_remove=True,
-        docker_url="unix://var/run/docker.sock",
-        on_success_callback=on_success_callback,
-        on_failure_callback=on_failure_callback,
-        doc_md="**Silver Layer**: Làm sạch dữ liệu, xử lý NULL, flatten quan hệ.",
+    # =========================================================================
+    # TẦNG 2: SILVER — Làm sạch & flatten dữ liệu
+    # =========================================================================
+    bronze_to_silver = spark_task(
+        task_id="bronze_to_silver",
+        script_path=f"{BRONZE_TO_SILVER}/bronze_to_silver.py",
+        dag=dag,
     )
 
-    # -----------------------------------------------------------------------
-    # Task 3: Silver → Gold (Star Schema + ML)
-    # -----------------------------------------------------------------------
-    load_gold = DockerOperator(
-        task_id="load_to_gold",
-        image="apache/spark:3.5.0",
-        container_name="task_load_gold",
-        command=spark_cmd("silver_to_gold.py"),
-        network_mode="adventureworks-olap-pipeline_retail_network",
-        auto_remove=True,
-        docker_url="unix://var/run/docker.sock",
-        on_success_callback=on_success_callback,
-        on_failure_callback=on_failure_callback,
-        doc_md="**Gold Layer**: Build Dim/Fact tables + KMeans RFM → PostgreSQL DW.",
+    # =========================================================================
+    # TẦNG 3: GOLD — DIMENSIONS (chạy song song, độc lập nhau)
+    # Phải hoàn thành tất cả Dims trước khi Facts có thể lookup FK
+    # =========================================================================
+
+    dim_date = spark_task(
+        task_id="gold_dim_date",
+        script_path=f"{SILVER_TO_GOLD}/build_dim_date.py",
+        dag=dag,
     )
 
-    # -----------------------------------------------------------------------
-    # Task 4: Pipeline Done — ghi log tổng kết
-    # -----------------------------------------------------------------------
+    dim_customer = spark_task(
+        task_id="gold_dim_customer",
+        script_path=f"{SILVER_TO_GOLD}/build_dim_customer.py",
+        dag=dag,
+    )
+
+    dim_product = spark_task(
+        task_id="gold_dim_product",
+        script_path=f"{SILVER_TO_GOLD}/build_dim_product.py",
+        dag=dag,
+    )
+
+    dim_geography = spark_task(
+        task_id="gold_dim_geography",
+        script_path=f"{SILVER_TO_GOLD}/build_dim_geography.py",
+        dag=dag,
+    )
+
+    dim_seller = spark_task(
+        task_id="gold_dim_seller",
+        script_path=f"{SILVER_TO_GOLD}/build_dim_seller.py",
+        dag=dag,
+    )
+
+    dim_vendor = spark_task(
+        task_id="gold_dim_vendor",
+        script_path=f"{SILVER_TO_GOLD}/build_dim_vendor.py",
+        dag=dag,
+    )
+
+    # Group tất cả dims để dễ set dependency với facts
+    all_dims = [dim_date, dim_customer, dim_product, dim_geography, dim_seller, dim_vendor]
+
+    # =========================================================================
+    # TẦNG 3: GOLD — FACTS (chạy song song SAU KHI tất cả Dims xong)
+    # Mỗi Fact cần lookup FK từ các Dim tương ứng
+    # =========================================================================
+
+    fact_order = spark_task(
+        task_id="gold_fact_order",
+        script_path=f"{SILVER_TO_GOLD}/build_fact_order.py",
+        dag=dag,
+    )
+
+    fact_product_daily = spark_task(
+        task_id="gold_fact_product_daily",
+        script_path=f"{SILVER_TO_GOLD}/build_fact_product_daily.py",
+        dag=dag,
+    )
+
+    fact_seller_daily = spark_task(
+        task_id="gold_fact_seller_daily",
+        script_path=f"{SILVER_TO_GOLD}/build_fact_seller_daily.py",
+        dag=dag,
+    )
+
+    fact_order_daily = spark_task(
+        task_id="gold_fact_order_daily",
+        script_path=f"{SILVER_TO_GOLD}/build_fact_order_daily.py",
+        dag=dag,
+    )
+
+    fact_inventory = spark_task(
+        task_id="gold_fact_inventory",
+        script_path=f"{SILVER_TO_GOLD}/build_fact_inventory.py",
+        dag=dag,
+    )
+
+    fact_customer_behavior = spark_task(
+        task_id="gold_fact_customer_behavior",
+        script_path=f"{SILVER_TO_GOLD}/build_fact_customer_behavior.py",
+        dag=dag,
+    )
+
+    all_facts = [
+        fact_order,
+        fact_product_daily,
+        fact_seller_daily,
+        fact_order_daily,
+        fact_inventory,
+        fact_customer_behavior,
+    ]
+
+    # =========================================================================
+    # TẦNG 4: ML SCORING — Placeholder (uncomment khi scripts ML sẵn sàng)
+    # =========================================================================
+    # ml_rfm_kmeans = spark_task(
+    #     task_id="ml_rfm_kmeans",
+    #     script_path=f"{SCRIPTS_ROOT}/ml/rfm_kmeans.py",
+    #     dag=dag,
+    # )
+    # ml_product_abc = spark_task(
+    #     task_id="ml_product_abc",
+    #     script_path=f"{SCRIPTS_ROOT}/ml/product_abc_class.py",
+    #     dag=dag,
+    # )
+    # all_ml = [ml_rfm_kmeans, ml_product_abc]
+
+    # =========================================================================
+    # NOTIFY DONE
+    # =========================================================================
     def pipeline_summary(**context):
-        run_id      = context["run_id"]
-        logical_dt  = context["logical_date"]
-        print("=" * 60)
-        print(f"  ✅ PIPELINE HOÀN THÀNH")
+        run_id     = context["run_id"]
+        logical_dt = context["logical_date"]
+        print("=" * 65)
+        print("  ✅  ADVENTUREWORKS PIPELINE HOÀN THÀNH")
         print(f"  Run ID      : {run_id}")
         print(f"  Logical Date: {logical_dt}")
-        print(f"  Dashboard   : http://localhost:8501")
-        print("=" * 60)
-        print("  Dữ liệu mới nhất đã sẵn sàng trên Dashboard!")
-        print("  → Bronze: MinIO s3a://bronze/")
-        print("  → Silver: MinIO s3a://silver/")
-        print("  → Gold  : PostgreSQL adventureworks_dw")
-        print("=" * 60)
+        print("=" * 65)
+        print("  Gold Layer (PostgreSQL adventureworks_dw):")
+        print("    Dims : dim_date, dim_customer, dim_product,")
+        print("           dim_geography, dim_seller, dim_vendor")
+        print("    Facts: fact_order, fact_product_daily,")
+        print("           fact_seller_daily, fact_order_daily,")
+        print("           fact_inventory, fact_customer_behavior")
+        print("  Dashboard: http://localhost:8501")
+        print("=" * 65)
 
     notify_done = PythonOperator(
-        task_id="notify_pipeline_done",
+        task_id="notify_done",
         python_callable=pipeline_summary,
-        doc_md="Ghi log tổng kết sau khi toàn bộ pipeline hoàn thành.",
+        dag=dag,
+        doc_md="Log tổng kết sau khi pipeline hoàn thành.",
     )
 
-    # -----------------------------------------------------------------------
-    # Dependency graph: tuyến tính theo thứ tự Medallion
-    # Bronze → Silver → Gold → Done
-    # -----------------------------------------------------------------------
-    ingest_bronze >> transform_silver >> load_gold >> notify_done
+    # =========================================================================
+    # DEPENDENCY GRAPH
+    # =========================================================================
+    #
+    #   ingest_bronze
+    #        │
+    #   bronze_to_silver
+    #        │
+    #   ┌────┴─────────────────────────────────────┐
+    #   dim_date  dim_customer  dim_product  ...   dim_vendor
+    #   └────┬─────────────────────────────────────┘
+    #        │
+    #   ┌────┴──────────────────────────────────────────┐
+    #   fact_order  fact_product_daily  ...  fact_customer_behavior
+    #   └────┬──────────────────────────────────────────┘
+    #        │
+    #   notify_done
+    #
+    # Uncomment khi thêm ML:
+    # └────┬──────────────────┐
+    #   ml_rfm_kmeans   ml_product_abc
+    #   └────┬──────────────────┘
+    #        │
+    #   notify_done
+    # =========================================================================
+
+    # Bronze → Silver (tuyến tính, phải theo thứ tự)
+    ingest_bronze >> bronze_to_silver
+
+    # Silver → tất cả Dims song song
+    bronze_to_silver >> all_dims
+
+    # Tất cả Dims xong → tất cả Facts song song
+    for dim in all_dims:
+        dim >> all_facts
+
+    # Tất cả Facts xong → notify
+    # (Uncomment dòng dưới và comment dòng cuối khi thêm ML)
+    # for fact in all_facts:
+    #     fact >> all_ml
+    # for ml in all_ml:
+    #     ml >> notify_done
+
+    for fact in all_facts:
+        fact >> notify_done
