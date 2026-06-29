@@ -112,12 +112,12 @@ services:
   streamlit-app:
     image: python:3.9-slim
     container_name: streamlit_dashboard
+    env_file: .env
     working_dir: /app
     ports:
       - "8501:8501"
     volumes:
       - ./app:/app
-      - ./requirements.txt:/app/requirements.txt
     command: >
       sh -c "pip install --no-cache-dir -r requirements.txt &&
              streamlit run app.py --server.port=8501 --server.address=0.0.0.0"

@@ -18,6 +18,10 @@ from pyspark.sql.types import (
 )
 
 
+# =============================================================================
+# STRING CLEANING
+# =============================================================================
+
 def trim_string_columns(df: DataFrame) -> DataFrame:
     """
     Trim khoảng trắng của tất cả cột String
