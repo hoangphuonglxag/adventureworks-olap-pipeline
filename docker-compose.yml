@@ -17,6 +17,29 @@ services:
     networks:
       - retail_network
 
+  #TỰ ĐỘNG RESTORE DATABASE
+  sqlserver-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sqlserver_init
+    depends_on:
+      - sqlserver-source
+    environment:
+      SQLSERVER_PASSWORD: "${SQLSERVER_PASSWORD}"
+    command: >
+      bash -c "
+        echo 'Waiting for SQL Server to start...';
+        sleep 10;
+        until /opt/mssql-tools18/bin/sqlcmd -S sqlserver-source -U sa -P \"$$SQLSERVER_PASSWORD\" -No -Q 'SELECT 1' &> /dev/null; do
+            echo 'SQL Server is unavailable - sleeping';
+            sleep 3;
+        done;
+        echo 'SQL Server is up - restoring database...';
+        /opt/mssql-tools18/bin/sqlcmd -S sqlserver-source -U sa -P \"$$SQLSERVER_PASSWORD\" -No -Q \"RESTORE DATABASE AdventureWorks2022 FROM DISK='/var/opt/mssql/backup/AdventureWorks2022.bak' WITH MOVE 'AdventureWorks2022' TO '/var/opt/mssql/data/AdventureWorks2022.mdf', MOVE 'AdventureWorks2022_log' TO '/var/opt/mssql/data/AdventureWorks2022_log.ldf', REPLACE\" || echo 'Database restore skipped or failed.';
+        echo 'Init done!';
+      "
+    networks:
+      - retail_network
+
   # 2. HỆ THỐNG LƯU TRỮ DATA LAKE (MINIO) - Nơi chứa file Parquet tầng Bronze & Silver
   minio:
     image: minio/minio
