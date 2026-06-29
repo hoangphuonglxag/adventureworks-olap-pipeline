@@ -1,7 +1,7 @@
 -- =============================================================================
 -- create_gold_tables.sql
 -- DDL: Khởi tạo Star Schema cho tầng Gold (PostgreSQL)
--- Database: adventureworks_dw
+-- Database: gold_dw
 --
 -- Chạy 1 lần khi khởi tạo database.
 -- Sau đó pipeline dùng UPSERT (ON CONFLICT DO UPDATE) để load data.

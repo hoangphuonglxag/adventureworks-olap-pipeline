@@ -18,7 +18,7 @@ GOLD_REPORT = []
 # CONFIGURATION & SPARK INIT
 # =============================================================================
 
-POSTGRES_URL      = os.environ.get("POSTGRES_GOLD_URL",      "jdbc:postgresql://postgres_gold_dw:5432/adventureworks_dw")
+POSTGRES_URL      = os.environ.get("POSTGRES_GOLD_URL",      "jdbc:postgresql://postgres_gold_dw:5432/gold_dw")
 POSTGRES_USER     = os.environ.get("POSTGRES_GOLD_USER",     "gold_user")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_GOLD_PASSWORD", "adminpassword")
 POSTGRES_DRIVER   = "org.postgresql.Driver"

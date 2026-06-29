@@ -25,7 +25,7 @@ from pyspark.sql import functions as F
 # CONFIG                                                                        #
 # --------------------------------------------------------------------------- #
 
-PG_URL      = os.environ.get("POSTGRES_GOLD_URL",      "jdbc:postgresql://postgres_gold_dw:5432/adventureworks_dw")
+PG_URL      = os.environ.get("POSTGRES_GOLD_URL",      "jdbc:postgresql://postgres_gold_dw:5432/gold_dw")
 PG_USER     = os.environ.get("POSTGRES_GOLD_USER",     "gold_user")
 PG_PASSWORD = os.environ.get("POSTGRES_GOLD_PASSWORD", "adminpassword")
 PG_DRIVER   = "org.postgresql.Driver"

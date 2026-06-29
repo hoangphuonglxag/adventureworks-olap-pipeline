@@ -41,7 +41,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: adventureworks_dw
+      POSTGRES_DB: gold_dw
     ports:
       - "5432:5432"
     volumes:
@@ -170,16 +170,15 @@ services:
       retries: 5
 
 
-  # 10. AIRFLOW SCHEDULER — Daemon lắng nghe & trigger DAG
+  # 10. AIRFLOW SCHEDULER
   airflow-scheduler:
     image: apache/airflow:2.9.1
     container_name: airflow_scheduler
     env_file: .env
-    user: root          # cần root để docker exec vào spark container
+    user: root       
     volumes:
       - airflow_data:/opt/airflow
       - ./dags:/opt/airflow/dags
-      # Mount Docker socket → BashOperator có thể gọi docker exec spark_master_engine
       - /var/run/docker.sock:/var/run/docker.sock
     command: airflow scheduler
     depends_on:

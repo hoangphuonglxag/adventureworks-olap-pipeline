@@ -68,7 +68,7 @@ with DAG(
     doc_md="""
 ## DAG 3: Silver → Gold (Star Schema)
 
-Build toàn bộ **Star Schema** vào PostgreSQL `adventureworks_dw`.
+Build toàn bộ **Star Schema** vào PostgreSQL `gold_dw`.
 
 ### Thứ tự chạy
 

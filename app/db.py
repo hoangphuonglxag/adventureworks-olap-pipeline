@@ -11,7 +11,7 @@ def get_engine():
     """
     user = os.getenv("POSTGRES_USER", "gold_user")
     password = os.getenv("POSTGRES_PASSWORD", "adminpassword")
-    db = "adventureworks_dw"
+    db = "gold_dw"
     
     # Khi chạy trong Docker, host là tên service: postgres-gold
     # Nếu chạy local ngoài Docker, cần chỉnh thành localhost
