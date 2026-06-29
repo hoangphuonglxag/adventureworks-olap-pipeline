@@ -193,4 +193,4 @@ services:
 volumes:
   pgadmin_data:
   minio_data:
-  airflow_data:
+  airflow_data:
