@@ -62,7 +62,7 @@ def build_dim_product(df, effective_date: str = None) -> "DataFrame":
     → Mỗi lần giá thay đổi, product_key mới được tạo ra.
     → fact_product_daily temporal join để lấy đúng key tại thời điểm order.
     """
-    eff_date = effective_date or str(date.today())
+    eff_date = effective_date or "2010-01-01"
 
     df = df.fillna({
         "product_name":    "Unknown",
