@@ -152,7 +152,7 @@ services:
     container_name: airflow_webserver
     env_file: .env
     ports:
-      - "8080:8080"
+      - "8082:8080"
     volumes:
       - airflow_data:/opt/airflow
       - ./dags:/opt/airflow/dags
