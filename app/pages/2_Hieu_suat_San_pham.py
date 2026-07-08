@@ -62,6 +62,10 @@ q_products = """
     JOIN dim_product dp ON fpd.product_key = dp.product_key
     JOIN dim_date d ON fpd.date_key = d.date_key
     WHERE d.full_date BETWEEN :start_date AND :end_date
+<<<<<<< HEAD
+=======
+      AND dp.product_name != 'UNKNOWN'
+>>>>>>> origin/develop
     GROUP BY dp.product_id, dp.product_name, dp.category_name, dp.subcategory_name
 """
 df_prod = run_query(q_products, params)
