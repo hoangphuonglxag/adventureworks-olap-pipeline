@@ -798,22 +798,3 @@ Streamlit
 
  **GitHub:**\
  https://github.com/hoangphuonglxag/adventureworks-olap-pipeline
-
- ### Mình sẽ chỉnh thêm một điểm nếu đây là README để đi xin internship
-
- Phần đầu hiện tại:
-
- > **Apache Airflow · Apache Spark · SQL Server · MinIO · PostgreSQL · Docker · Streamlit · Spark MLlib · Parquet · JSONB**
-
- là hợp lý hơn việc nhét toàn bộ tech vào title. Nó tạo cảm giác giống project **Smart City** của bạn:
-
- > **Smart City Real-Time IoT Streaming & Lakehouse Architecture**\
->  Apache Flink · Redpanda · Eclipse Mosquitto · HAProxy · ...
-
- Còn với AdventureWorks, title nên giữ:
-
- > **Enterprise Data Warehouse — Multi-Domain OLTP**
-
- và ngay bên dưới là stack.
-
- **Có một điểm mình đặc biệt khuyên sửa so với bản README trước:** đừng ghi những thứ project **chưa thực sự có** chỉ để README nhìn “xịn”. Ví dụ nếu repo thực tế chưa có `dags/bronze/silver/gold`, hoặc chưa có cơ chế retry/idempotency cụ thể thì không nên claim. README tốt cho CV là README **reproduce được và nói đúng phần bạn trực tiếp làm**.
